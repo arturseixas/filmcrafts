@@ -12,15 +12,20 @@ package ai.storyteller.filmcraft;
 import android.Manifest;
 import android.app.NativeActivity;
 import android.content.ClipData;
+import android.content.ActivityNotFoundException;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
+import android.webkit.MimeTypeMap;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.View;
@@ -34,7 +39,12 @@ import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class FilmcraftActivity extends NativeActivity {
     static {
@@ -46,9 +56,25 @@ public class FilmcraftActivity extends NativeActivity {
     /** Text the soft keyboard committed (any Unicode, emoji included): sent to egui as typed text. */
     private static native void nativeText(String text);
 
+    /** Importing from the Gallery or Files: the file being copied and how far along it is. */
+    private static native void nativeImportProgress(String name, int index, int count, long done, long total);
+
+    /**
+     * The import is over: the copied files' paths (none when the picker was dismissed or the copy
+     * cancelled) and the error that stopped it, or null.
+     */
+    private static native void nativeImportFinished(String[] paths, String error);
+
     private static final int REQUEST_STORAGE = 1;
     private static final int REQUEST_MEDIA = 2;
     private static final int REQUEST_MICROPHONE = 3;
+    private static final int REQUEST_PICK_MEDIA = 10;
+
+    /** Pickers hand out time-limited read access, so what is chosen is copied here at once. */
+    private static final String IMPORT_DIR = "Imported";
+
+    private final AtomicBoolean importCancelled = new AtomicBoolean();
+    private volatile boolean importing;
 
     private ImeView imeView;
 
@@ -201,6 +227,208 @@ public class FilmcraftActivity extends NativeActivity {
             out[i] = list.get(i).toLanguageTag();
         }
         return out;
+    }
+
+    // ------------------------------------------------------------ import from Gallery / Files
+
+    /**
+     * Open the system's Gallery picker (the Photo Picker: videos and pictures, no permission
+     * needed) or Files (the document picker: any app's storage, cloud drives, SD cards and USB
+     * drives). What the user chooses is copied into this app's Imported folder and reported to
+     * the native side ({@link #nativeImportProgress}, {@link #nativeImportFinished}).
+     */
+    public void pickMedia(boolean gallery, boolean multiple) {
+        runOnUiThread(() -> {
+            if (importing) {
+                return;
+            }
+            try {
+                if (gallery) {
+                    pickFromGallery(multiple);
+                } else {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("*/*");
+                    i.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"video/*", "audio/*", "image/*"});
+                    i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple);
+                    startActivityForResult(i, REQUEST_PICK_MEDIA);
+                }
+            } catch (RuntimeException e) {
+                nativeImportFinished(new String[0], "No app can pick files here: " + e.getMessage());
+            }
+        });
+    }
+
+    private void pickFromGallery(boolean multiple) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            // the Photo Picker: part of Android 13, and of Android 11 and 12 through system updates
+            Intent i = new Intent("android.provider.action.PICK_IMAGES");
+            if (multiple) {
+                int max = Build.VERSION.SDK_INT >= 33 ? MediaStore.getPickImagesMaxLimit() : 100;
+                i.putExtra("android.provider.extra.PICK_IMAGES_MAX", max);
+            }
+            try {
+                startActivityForResult(i, REQUEST_PICK_MEDIA);
+                return;
+            } catch (ActivityNotFoundException e) {
+                // no Photo Picker on this device: the generic content picker below
+            }
+        }
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"video/*", "image/*"});
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple);
+        startActivityForResult(i, REQUEST_PICK_MEDIA);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_PICK_MEDIA) {
+            return;
+        }
+        ArrayList<Uri> uris = new ArrayList<>();
+        if (resultCode == RESULT_OK && data != null) {
+            if (data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                    uris.add(data.getClipData().getItemAt(i).getUri());
+                }
+            } else if (data.getData() != null) {
+                uris.add(data.getData());
+            }
+        }
+        if (uris.isEmpty()) {
+            nativeImportFinished(new String[0], null);
+            return;
+        }
+        importing = true;
+        importCancelled.set(false);
+        Thread worker = new Thread(() -> copyAll(uris), "filmcraft-import");
+        worker.start();
+    }
+
+    /** Stop the copy in progress; its partial file is deleted. */
+    public void cancelImport() {
+        importCancelled.set(true);
+    }
+
+    private void copyAll(ArrayList<Uri> uris) {
+        ArrayList<String> done = new ArrayList<>();
+        String error = null;
+        try {
+            File dir = importDir();
+            for (int i = 0; i < uris.size() && !importCancelled.get(); i++) {
+                String path = copyOne(uris.get(i), dir, i, uris.size());
+                if (path != null) {
+                    done.add(path);
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            error = e.getMessage() == null ? e.toString() : e.getMessage();
+        } finally {
+            importing = false;
+        }
+        if (importCancelled.get()) {
+            done.clear();
+            error = null;
+        }
+        nativeImportFinished(done.toArray(new String[0]), error);
+    }
+
+    private File importDir() throws IOException {
+        File base = getExternalFilesDir(null);
+        File dir = new File(base != null ? base : getFilesDir(), IMPORT_DIR);
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            throw new IOException("Can't create " + dir);
+        }
+        return dir;
+    }
+
+    /** Copy one picked item into {@code dir}, reporting progress; returns its path, or null if cancelled. */
+    private String copyOne(Uri uri, File dir, int index, int count) throws IOException {
+        String name = null;
+        long size = -1;
+        try (Cursor c = getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE}, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                name = c.getString(0);
+                if (!c.isNull(1)) {
+                    size = c.getLong(1);
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // a provider without the columns: the name comes from the address
+        }
+        if (name == null || name.isEmpty()) {
+            name = uri.getLastPathSegment() == null ? "Media" : uri.getLastPathSegment();
+        }
+        name = name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+        if (name.startsWith(".")) {
+            name = "_" + name.substring(1);
+        }
+        if (name.length() > 150) {
+            int dot = name.lastIndexOf('.');
+            String ext = dot > 0 && name.length() - dot <= 10 ? name.substring(dot) : "";
+            name = name.substring(0, 150 - ext.length()) + ext;
+        }
+        if (name.lastIndexOf('.') <= 0) {
+            String type = getContentResolver().getType(uri);
+            String ext = type == null ? null : MimeTypeMap.getSingleton().getExtensionFromMimeType(type);
+            if (ext != null) {
+                name = name + "." + ext;
+            }
+        }
+        File target = new File(dir, name);
+        // the same file chosen again is not copied again
+        if (size >= 0 && target.isFile() && target.length() == size) {
+            return target.getAbsolutePath();
+        }
+        if (target.exists()) {
+            int dot = name.lastIndexOf('.');
+            String stem = dot > 0 ? name.substring(0, dot) : name;
+            String ext = dot > 0 ? name.substring(dot) : "";
+            for (int n = 2; target.exists(); n++) {
+                target = new File(dir, stem + " (" + n + ")" + ext);
+            }
+        }
+        File part = new File(dir, target.getName() + ".part");
+        boolean complete = false;
+        try (InputStream in = getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(part)) {
+            if (in == null) {
+                throw new IOException("Can't open " + name);
+            }
+            byte[] buf = new byte[1 << 20];
+            long copied = 0;
+            long reported = 0;
+            nativeImportProgress(name, index, count, 0, size);
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                if (importCancelled.get()) {
+                    return null;
+                }
+                out.write(buf, 0, n);
+                copied += n;
+                long now = System.nanoTime();
+                if (now - reported > 100_000_000L) {
+                    reported = now;
+                    nativeImportProgress(name, index, count, copied, size);
+                }
+            }
+            out.flush();
+            complete = true;
+        } finally {
+            if (!complete) {
+                // cancelled, or the copy failed (a full disk): no half file stays behind
+                //noinspection ResultOfMethodCallIgnored
+                part.delete();
+            }
+        }
+        if (!part.renameTo(target)) {
+            //noinspection ResultOfMethodCallIgnored
+            part.delete();
+            throw new IOException("Can't save " + name);
+        }
+        return target.getAbsolutePath();
     }
 
     public boolean openUrl(String url) {

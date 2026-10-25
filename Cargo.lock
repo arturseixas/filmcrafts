@@ -2251,7 +2251,6 @@ dependencies = [
  "libloading",
  "log",
  "ndk",
- "ndk-context",
  "objc2-core-foundation",
  "objc2-core-media",
  "objc2-core-video",

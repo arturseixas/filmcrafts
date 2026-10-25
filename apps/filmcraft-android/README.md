@@ -11,7 +11,7 @@ command and shortcut on the desktop works the same way here.
 | Graphics | wgpu on **Vulkan**, or **OpenGL ES 3** where Vulkan is missing (or crashed at start-up) |
 | Decoding | **MediaCodec** hardware H.264 / HEVC (8-bit 4:2:0), FilmCraft's pure-Rust decoders for everything else and as the fallback |
 | Audio | AAudio through cpal (playback clock, voice-over recording) |
-| Files | opened **by path**, never copied in: an in-app browser of shared storage, SD cards and USB drives |
+| Files | the system **Gallery** and **Files** pickers (copied in), or an in-app browser of shared storage, SD cards and USB drives that opens **by path** with no copy |
 
 ## Install
 
@@ -23,7 +23,21 @@ manager when Android asks). Or, with USB debugging:
 adb install -r FilmCraft-0.13.0-arm64-v8a.apk
 ```
 
-On the first Import, FilmCraft asks for storage access. **Allow access to all files** lets it read
+**Importing media.** File ▸ Import (and the Project panel's import button) opens FilmCraft's
+browser with two ways in at the top, like other mobile editors:
+
+- **Gallery** opens Android's Photo Picker: your videos and photos, with thumbnails, several at
+  once. No permission is needed.
+- **Files app** opens the system document picker: anything in Downloads, an SD card or USB drive,
+  or a cloud drive (Google Drive and others), again with no permission.
+
+What you pick is copied into FilmCraft's own folder (`Android/data/ai.storyteller.filmcraft/files/Imported`,
+with a progress bar and Cancel) and imported from there; picking the same file again reuses the
+copy. The picker's access is temporary, which is why a copy is needed, and it keeps the project
+working after Android stops giving FilmCraft that access. The browser itself below those two
+buttons opens files in place, without copying, once you give it storage access.
+
+On the first use of the browser, FilmCraft asks for storage access. **Allow access to all files** lets it read
 media and save projects and exports anywhere, like on a computer. **Media only** reads videos,
 pictures and music. Without either, FilmCraft works inside its own folder
 (`Android/data/ai.storyteller.filmcraft/files`).
@@ -90,12 +104,14 @@ libfilmcraft.so: android_main (src/lib.rs)
   the same `HybridDecoder` as VideoToolbox, Media Foundation and VA-API, so a decoder that fails
   mid-stream continues in software without a visible glitch. Settings ▸ Playback ▸ Hardware decoding
   turns it off. At most six hardware sessions are open at once; more clips decode in software.
-- **Files by path.** FilmCraft's engine, projects, relinking, proxies and recovery all work with
-  paths. Android's system picker returns content URIs, which would mean copying every clip into the
-  app first. With storage access, paths work as on Linux, and imports are zero-copy.
+- **Files by path, and the system pickers.** FilmCraft's engine, projects, relinking, proxies and
+  recovery all work with paths. Android's Gallery and Files pickers return content URIs with
+  temporary access, so what they return is copied into the app's `Imported` folder
+  (`FilmcraftActivity.pickMedia`) and the copies' paths go to the same import as any other file.
+  With storage access, the in-app browser reads paths directly and imports are zero-copy.
 - **Graphics fallback** (`src/gfx.rs`): if a start dies before the first frames paint (a Vulkan
   driver crash), the next start uses OpenGL ES and says so, with a button back to the default.
 
 Not yet on Android: the system share sheet and opening files from other apps ("Open with"),
-Android's system file picker (cloud drives), hardware encoding (exports use FilmCraft's own
+hardware encoding (exports use FilmCraft's own
 encoders), and the TCP control channel / MCP bridge.

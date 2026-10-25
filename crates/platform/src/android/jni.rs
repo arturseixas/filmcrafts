@@ -2,30 +2,50 @@
 //! `NativeActivity` subclass in `apps/filmcraft-android/java`) and the one native method it calls
 //! back (`nativeText`, text from the soft keyboard).
 //!
-//! The activity and the Java VM come from `ndk-context`, which android-activity initialises before
-//! `android_main` runs. Every call attaches the calling thread for its duration, clears a pending
+//! The activity and the Java VM are given by the app at start-up ([`set_activity`], from
+//! android-activity's `AndroidApp`). Every call attaches the calling thread for its duration, clears a pending
 //! Java exception and reports failure as `None` / `Err` (a missing method, an old activity class,
 //! no activity yet): a JNI problem never takes the app down.
 
+use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use jni::objects::{JObject, JObjectArray, JString, JValue};
+use jni::sys::{jint, jlong};
 use jni::{JNIEnv, JavaVM};
+
+/// The process's Java VM and the `FilmcraftActivity` object, set by [`set_activity`].
+static VM: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ACTIVITY: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Remember the Java VM and the activity for the calls below. `ndk-context` is not used for this:
+/// the context it holds is the `Application`, which has none of the activity's methods.
+///
+/// # Safety
+/// `vm` must be the process's `JavaVM*` and `activity` a JNI *global* reference to the
+/// `FilmcraftActivity`, both valid until this is called again (android-activity's
+/// `AndroidApp::vm_as_ptr` and `activity_as_ptr` are, while that `AndroidApp` lives, and
+/// `android_main` does not return before the app is over).
+pub unsafe fn set_activity(vm: *mut c_void, activity: *mut c_void) {
+    VM.store(vm, Ordering::Release);
+    ACTIVITY.store(activity, Ordering::Release);
+}
 
 /// Run `f` with a JNI environment for this thread and the activity object.
 fn with_activity<T>(f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<T>) -> Result<T, String> {
-    let ctx = ndk_context::android_context();
-    if ctx.vm().is_null() || ctx.context().is_null() {
+    let (vm, activity) = (VM.load(Ordering::Acquire), ACTIVITY.load(Ordering::Acquire));
+    if vm.is_null() || activity.is_null() {
         return Err("no Android activity".into());
     }
-    // SAFETY: android-activity stores the process's JavaVM pointer in ndk-context before
-    // android_main runs, and it stays valid for the life of the process.
-    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+    // SAFETY: `set_activity`'s contract: the process's JavaVM pointer, valid for the life of the
+    // process.
+    let vm = unsafe { JavaVM::from_raw(vm.cast()) }.map_err(|e| e.to_string())?;
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
-    // SAFETY: ndk-context holds a global reference to the activity for the life of the process;
-    // this borrowed JObject never deletes it (a plain JObject has no destructor).
-    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+    // SAFETY: `set_activity`'s contract: a global reference that stays valid; this borrowed JObject
+    // never deletes it (a plain JObject has no destructor).
+    let activity = unsafe { JObject::from_raw(activity.cast()) };
     let result = f(&mut env, &activity);
     if env.exception_check().unwrap_or(false) {
         let _ = env.exception_describe();
@@ -177,14 +197,21 @@ pub fn set_keyboard_visible(visible: bool) {
 
 /// Text committed by the soft keyboard, waiting for the next UI frame.
 static TYPED: Mutex<Vec<String>> = Mutex::new(Vec::new());
-/// Wakes the UI when text arrives (set by the app).
-static ON_TEXT: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+/// Wakes the UI when the keyboard or an import has something for it (set by the app).
+static ON_WAKE: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 /// A keyboard can't type faster than this between two frames; more is dropped.
 const TYPED_MAX: usize = 4096;
 
-/// Call `wake` (from the keyboard's thread) whenever the soft keyboard commits text.
-pub fn set_on_text(wake: Box<dyn Fn() + Send + Sync>) {
-    let _ = ON_TEXT.set(wake);
+/// Call `wake` (from the keyboard's or the import's thread) whenever the soft keyboard commits
+/// text or an import from the Gallery or Files moves on.
+pub fn set_wake(wake: Box<dyn Fn() + Send + Sync>) {
+    let _ = ON_WAKE.set(wake);
+}
+
+fn wake() {
+    if let Some(wake) = ON_WAKE.get() {
+        wake();
+    }
 }
 
 /// The text the soft keyboard committed since the last call, oldest first.
@@ -212,9 +239,115 @@ pub extern "system" fn Java_ai_storyteller_filmcraft_FilmcraftActivity_nativeTex
                 typed.push(s);
             }
         }
-        if let Some(wake) = ON_TEXT.get() {
-            wake();
+        wake();
+    }));
+}
+
+// ------------------------------------------------------------- import from Gallery / Files
+
+/// How far the copy of a picked file has got.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportProgress {
+    pub name: String,
+    /// Position of this file among the picked ones, from 0.
+    pub index: u32,
+    pub count: u32,
+    pub done: u64,
+    /// The file's size; 0 when the provider does not say.
+    pub total: u64,
+}
+
+/// The copy in progress (none once it is over).
+static IMPORT_PROGRESS: Mutex<Option<ImportProgress>> = Mutex::new(None);
+/// How the last import ended, until [`take_import_result`] takes it: the copied files' paths (none:
+/// the picker was dismissed, or the copy cancelled), or what stopped it.
+static IMPORT_RESULT: Mutex<Option<Result<Vec<String>, String>>> = Mutex::new(None);
+
+/// Open the system's Gallery picker (`gallery`: videos and pictures, no permission needed) or
+/// Files (documents from any app, cloud drive, SD card or USB drive), then copy what is chosen into
+/// the app's `Imported` folder. Follow it with [`import_progress`] and [`take_import_result`].
+pub fn pick_media(gallery: bool, multiple: bool) -> Result<(), String> {
+    *IMPORT_PROGRESS.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    *IMPORT_RESULT.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    with_activity(|env, a| env.call_method(a, "pickMedia", "(ZZ)V", &[JValue::Bool(u8::from(gallery)), JValue::Bool(u8::from(multiple))])?.v())
+}
+
+/// The copy in progress, if any.
+pub fn import_progress() -> Option<ImportProgress> {
+    IMPORT_PROGRESS.lock().unwrap_or_else(PoisonError::into_inner).clone()
+}
+
+/// How the import ended, once: `Ok` with no paths when the picker was dismissed or the copy
+/// cancelled.
+pub fn take_import_result() -> Option<Result<Vec<String>, String>> {
+    IMPORT_RESULT.lock().unwrap_or_else(PoisonError::into_inner).take()
+}
+
+/// Stop the copy in progress (its partial file is deleted).
+pub fn cancel_import() {
+    call_void("cancelImport");
+}
+
+/// `FilmcraftActivity.nativeImportProgress(String, int, int, long, long)`, from the copy thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_ai_storyteller_filmcraft_FilmcraftActivity_nativeImportProgress<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JObject<'local>,
+    name: JString<'local>,
+    index: jint,
+    count: jint,
+    done: jlong,
+    total: jlong,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let name = env.get_string(&name).map(String::from).unwrap_or_default();
+        let progress = ImportProgress {
+            name,
+            index: u32::try_from(index).unwrap_or(0),
+            count: u32::try_from(count).unwrap_or(0),
+            done: u64::try_from(done).unwrap_or(0),
+            total: u64::try_from(total).unwrap_or(0),
+        };
+        *IMPORT_PROGRESS.lock().unwrap_or_else(PoisonError::into_inner) = Some(progress);
+        wake();
+    }));
+}
+
+/// `FilmcraftActivity.nativeImportFinished(String[], String)`, from the copy thread (or the UI
+/// thread when the picker was dismissed).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_ai_storyteller_filmcraft_FilmcraftActivity_nativeImportFinished<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JObject<'local>,
+    paths: JObjectArray<'local>,
+    error: JString<'local>,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let mut out = Vec::new();
+        if !paths.is_null() {
+            let n = env.get_array_length(&paths).unwrap_or(0);
+            for i in 0..n.min(10_000) {
+                if let Ok(item) = env.get_object_array_element(&paths, i)
+                    && !item.is_null()
+                    && let Ok(s) = env.get_string(&JString::from(item))
+                {
+                    out.push(String::from(s));
+                }
+            }
         }
+        let error = if error.is_null() { None } else { env.get_string(&error).ok().map(String::from) };
+        let result = match error {
+            // some files were copied before the error: those still import
+            Some(e) if out.is_empty() => Err(e),
+            Some(e) => {
+                log::warn!("import stopped early: {e}");
+                Ok(out)
+            }
+            None => Ok(out),
+        };
+        *IMPORT_PROGRESS.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *IMPORT_RESULT.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
+        wake();
     }));
 }
 

@@ -83,6 +83,11 @@ struct View {
     /// and when storage access changes rather than on every frame (each is a JNI call and stats).
     places: Vec<(String, PathBuf)>,
     last_tap: Option<(PathBuf, Instant)>,
+    /// The dialog imports media: it offers the Gallery and Files pickers of the system.
+    can_pick_media: bool,
+    /// The system picker is open or its picks are being copied in; the dialog answers with the
+    /// copies when they are done.
+    waiting_import: bool,
 }
 
 /// The browser: [`Browser::hook`] receives dialogs from the UI, [`Browser::ui`] draws the open one.
@@ -91,6 +96,12 @@ pub struct Browser {
     incoming: Rc<RefCell<Option<(FileDialog, Sender<Vec<String>>)>>>,
     view: Option<View>,
     remembered: Remembered,
+}
+
+/// Whether a dialog's extension filter is for media (or for everything), as opposed to a settings
+/// or preset file: the Gallery and Files pickers only offer media.
+fn looks_like_media(exts: &[String]) -> bool {
+    exts.is_empty() || exts.iter().any(|e| matches!(e.as_str(), "mp4" | "mov" | "mkv" | "wav" | "mp3" | "png" | "jpg" | "jpeg"))
 }
 
 fn lower(exts: &[String]) -> Vec<String> {
@@ -131,6 +142,9 @@ impl Browser {
     pub fn cancel(&mut self) -> bool {
         match self.view.take() {
             Some(v) => {
+                if v.waiting_import {
+                    jni::cancel_import();
+                }
                 let _ = v.answer.send(Vec::new());
                 true
             }
@@ -140,6 +154,9 @@ impl Browser {
 
     fn open(&mut self, dialog: FileDialog, answer: Sender<Vec<String>>) {
         if let Some(old) = self.view.take() {
+            if old.waiting_import {
+                jni::cancel_import();
+            }
             let _ = old.answer.send(Vec::new());
         }
         let access = (jni::has_storage_access(), jni::has_media_access());
@@ -169,6 +186,7 @@ impl Browser {
             }
         };
         let dir = at.filter(|d| d.is_dir()).or_else(|| self.remembered_dir(purpose)).unwrap_or_else(|| default_dir(purpose, access.0 || access.1));
+        let can_pick_media = matches!(mode, Mode::Open { .. }) && purpose == Purpose::Media && looks_like_media(&exts);
         let mut view = View {
             mode,
             purpose,
@@ -187,6 +205,8 @@ impl Browser {
             access_checked: Instant::now(),
             places: places(),
             last_tap: None,
+            can_pick_media,
+            waiting_import: false,
         };
         view.refresh();
         self.view = Some(view);
@@ -235,12 +255,26 @@ impl Browser {
         }
         ctx.request_repaint_after(ACCESS_POLL);
         let mut done: Option<Vec<String>> = None;
+        if view.waiting_import
+            && let Some(result) = jni::take_import_result()
+        {
+            view.waiting_import = false;
+            match result {
+                // the copies are imported like files chosen in the browser
+                Ok(paths) if !paths.is_empty() => done = Some(paths),
+                // the picker was dismissed: back to the browser
+                Ok(_) => {}
+                Err(e) => view.error = Some(e),
+            }
+        }
         let screen = ctx.content_rect();
         let size = egui::vec2((screen.width() * 0.92).min(1100.0), (screen.height() * 0.92).min(800.0));
         let modal = egui::Modal::new(egui::Id::unique("android-file-browser")).show(ctx, |ui| {
             ui.set_width(size.x);
             ui.set_height(size.y);
-            done = view.contents(ui);
+            if let Some(d) = view.contents(ui) {
+                done = Some(d);
+            }
         });
         if modal.should_close() && done.is_none() {
             done = Some(Vec::new());
@@ -249,6 +283,9 @@ impl Browser {
             && let Some(v) = self.view.take()
         {
             let (purpose, dir) = (v.purpose, v.dir.clone());
+            if v.waiting_import {
+                jni::cancel_import();
+            }
             let _ = v.answer.send(paths);
             self.remember(purpose, dir);
         }
@@ -334,6 +371,32 @@ fn date(t: Option<SystemTime>) -> String {
 }
 
 impl View {
+    /// The system picker is open, then its picks are copied into the app: show how far along.
+    fn import_progress(&mut self, ui: &mut egui::Ui, row_h: f32) {
+        ui.add_space(row_h);
+        ui.vertical_centered(|ui| match jni::import_progress() {
+            Some(p) => {
+                let which = if p.count > 1 { format!("{} {} / {}", t("Copying"), p.index.saturating_add(1), p.count) } else { t("Copying").to_string() };
+                ui.label(format!("{which}: {}", p.name));
+                let fraction = if p.total > 0 { (p.done as f64 / p.total as f64).clamp(0.0, 1.0) as f32 } else { 0.0 };
+                let text = if p.total > 0 { format!("{} / {}", human_size(p.done), human_size(p.total)) } else { human_size(p.done) };
+                let bar = egui::ProgressBar::new(fraction).text(text).animate(p.total == 0);
+                ui.add_sized([ui.available_width().min(520.0), row_h], bar);
+            }
+            None => {
+                ui.label(t("Waiting for your choice in the picker…"));
+                ui.spinner();
+            }
+        });
+        ui.add_space(row_h * 0.5);
+        ui.vertical_centered(|ui| {
+            if ui.add(egui::Button::new(t("Cancel")).min_size(egui::vec2(140.0, row_h))).clicked() {
+                // the copy stops, deletes its partial file and reports back; the browser returns
+                jni::cancel_import();
+            }
+        });
+    }
+
     fn matches(&self, name: &str) -> bool {
         if self.show_all || self.exts.is_empty() {
             return true;
@@ -415,6 +478,26 @@ impl View {
                 }
             });
         });
+        if self.waiting_import {
+            self.import_progress(ui, row_h);
+            return done;
+        }
+        if self.can_pick_media {
+            ui.horizontal_wrapped(|ui| {
+                let size = egui::vec2(150.0, row_h);
+                let multiple = self.mode == Mode::Open { multiple: true };
+                for (gallery, label) in [(true, t("Gallery")), (false, t("Files app"))] {
+                    if ui.add(egui::Button::new(label).min_size(size)).clicked() {
+                        match jni::pick_media(gallery, multiple) {
+                            Ok(()) => self.waiting_import = true,
+                            Err(e) => self.error = Some(e),
+                        }
+                    }
+                }
+                ui.weak(t("Pick videos and photos from your Gallery or the Files app (cloud drives, SD cards): no storage access needed"));
+            });
+            ui.separator();
+        }
         if !self.access.0 {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {

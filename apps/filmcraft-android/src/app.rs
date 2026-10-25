@@ -23,6 +23,9 @@ const MIN_AUTO_ZOOM: f32 = 0.6;
 #[allow(unsafe_code)] // `no_mangle`: android-activity looks this symbol up by name; nothing unsafe runs.
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
+    // SAFETY: both pointers come from `app`, which lives until this function returns, and a global
+    // reference to the activity is what `activity_as_ptr` returns.
+    unsafe { jni::set_activity(app.vm_as_ptr(), app.activity_as_ptr()) };
     let logger = crate::log_sink::install();
     let files = app.internal_data_path();
     // Android sets no HOME or TMPDIR an app can write to (std::env::temp_dir is /data/local/tmp).
@@ -206,7 +209,7 @@ fn app_creator(data_dir: Option<PathBuf>, graphics: crate::gfx::GraphicsStart, c
         filmcraft_ui_egui::install_ime_reset_callbacks(&cc.egui_ctx);
         created.store(true, Ordering::Relaxed);
         let ctx = cc.egui_ctx.clone();
-        jni::set_on_text(Box::new(move || ctx.request_repaint()));
+        jni::set_wake(Box::new(move || ctx.request_repaint()));
         let notice = (graphics.mode() != crate::gfx::Mode::Default).then(|| {
             let start = graphics.clone();
             filmcraft_ui_egui::graphics_notice::GraphicsNotice::new(graphics.mode().label(), Box::new(move || start.reset_to_default()))

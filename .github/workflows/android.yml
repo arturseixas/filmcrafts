@@ -89,13 +89,12 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           script: apps/filmcraft-android/ci-smoke.sh dist smoke
-      - name: Screenshot (base64 JPEG, for reading from the log)
+      - name: Screenshot (base64 PNG, for reading from the log)
         if: always()
         run: |
           if [ -f smoke/screenshot.png ]; then
-            convert smoke/screenshot.png -resize 960x960 -quality 70 smoke/screenshot-small.jpg
             echo "----- BEGIN SCREENSHOT -----"
-            base64 -w 0 smoke/screenshot-small.jpg
+            base64 -w 0 smoke/screenshot.png
             echo
             echo "----- END SCREENSHOT -----"
           fi

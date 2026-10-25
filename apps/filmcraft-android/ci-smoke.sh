@@ -37,4 +37,9 @@ if grep -E "FilmCraft.*panic:|Fatal signal|FATAL EXCEPTION.*$pkg|>>> $pkg <<<" "
     echo "FilmCraft crashed (see logcat above)" >&2
     status=1
 fi
+# the calls into the activity (JNI) work: the log line names the Android version it read
+if grep -E "FilmCraft.*\(Android, API 0," "$out/logcat.txt"; then
+    echo "the app could not call its activity (JNI)" >&2
+    status=1
+fi
 exit "$status"
