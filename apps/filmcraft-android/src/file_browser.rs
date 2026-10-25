@@ -79,6 +79,9 @@ struct View {
     answer: Sender<Vec<String>>,
     access: (bool, bool),
     access_checked: Instant,
+    /// The Places column (storage volumes and their usual folders), found when the dialog opens
+    /// and when storage access changes rather than on every frame (each is a JNI call and stats).
+    places: Vec<(String, PathBuf)>,
     last_tap: Option<(PathBuf, Instant)>,
 }
 
@@ -182,6 +185,7 @@ impl Browser {
             answer,
             access,
             access_checked: Instant::now(),
+            places: places(),
             last_tap: None,
         };
         view.refresh();
@@ -225,6 +229,7 @@ impl Browser {
                 if !access.0 && !access.1 {
                     view.dir = default_dir(view.purpose, false);
                 }
+                view.places = places();
                 view.refresh();
             }
         }
@@ -278,6 +283,39 @@ fn default_dir(purpose: Purpose, shared: bool) -> PathBuf {
         }
         None => primary_root(),
     }
+}
+
+/// The Places column: each storage volume (the internal one with its usual folders) and this
+/// app's folder.
+fn places() -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    let roots = jni::storage_roots();
+    for (i, r) in roots.iter().enumerate() {
+        let root = PathBuf::from(r);
+        if i == 0 {
+            out.push((t("Internal storage").to_string(), root.clone()));
+            for (label, sub) in [
+                ("Camera", "DCIM/Camera"),
+                ("Movies", "Movies"),
+                ("Download", "Download"),
+                ("Documents", "Documents"),
+                ("Music", "Music"),
+                ("Pictures", "Pictures"),
+            ] {
+                let d = root.join(sub);
+                if d.is_dir() {
+                    out.push((format!("  {}", t(label)), d));
+                }
+            }
+        } else {
+            let name = root.file_name().map_or_else(|| r.clone(), |n| n.to_string_lossy().into_owned());
+            out.push((format!("{} ({name})", t("Storage")), root));
+        }
+    }
+    if let Some(a) = app_dir() {
+        out.push((t("FilmCraft folder").to_string(), a));
+    }
+    out
 }
 
 fn human_size(n: u64) -> String {
@@ -365,37 +403,6 @@ impl View {
         Some(self.dir.join(file))
     }
 
-    fn places(&self) -> Vec<(String, PathBuf)> {
-        let mut out = Vec::new();
-        let roots = jni::storage_roots();
-        for (i, r) in roots.iter().enumerate() {
-            let root = PathBuf::from(r);
-            if i == 0 {
-                out.push((t("Internal storage").to_string(), root.clone()));
-                for (label, sub) in [
-                    ("Camera", "DCIM/Camera"),
-                    ("Movies", "Movies"),
-                    ("Download", "Download"),
-                    ("Documents", "Documents"),
-                    ("Music", "Music"),
-                    ("Pictures", "Pictures"),
-                ] {
-                    let d = root.join(sub);
-                    if d.is_dir() {
-                        out.push((format!("  {}", t(label)), d));
-                    }
-                }
-            } else {
-                let name = root.file_name().map_or_else(|| r.clone(), |n| n.to_string_lossy().into_owned());
-                out.push((format!("{} ({name})", t("Storage")), root));
-            }
-        }
-        if let Some(a) = app_dir() {
-            out.push((t("FilmCraft folder").to_string(), a));
-        }
-        out
-    }
-
     /// Draw the dialog; `Some(paths)` when it is done (empty: cancelled).
     fn contents(&mut self, ui: &mut egui::Ui) -> Option<Vec<String>> {
         let mut done = None;
@@ -446,11 +453,15 @@ impl View {
             ui.vertical(|ui| {
                 ui.set_width(ui.available_width().min(220.0));
                 egui::ScrollArea::vertical().id_salt("places").max_height(body_h).auto_shrink([false, false]).show(ui, |ui| {
-                    for (label, path) in self.places() {
-                        let here = self.dir == path;
-                        if ui.add(egui::Button::selectable(here, label).min_size(egui::vec2(ui.available_width(), row_h))).clicked() {
-                            self.go(path);
+                    let mut go = None;
+                    for (label, path) in &self.places {
+                        let here = self.dir == *path;
+                        if ui.add(egui::Button::selectable(here, label.as_str()).min_size(egui::vec2(ui.available_width(), row_h))).clicked() {
+                            go = Some(path.clone());
                         }
+                    }
+                    if let Some(path) = go {
+                        self.go(path);
                     }
                 });
             });
