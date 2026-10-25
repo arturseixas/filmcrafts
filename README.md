@@ -249,6 +249,7 @@ The trailer and the grades in these screenshots were built exactly this way, by 
 
 - **Native** on macOS, Windows and Linux, with a native macOS menu bar.
 - **The web:** the same engine and UI run in the browser via WebAssembly (`apps/filmcraft-web`, see [docs/web.md](docs/web.md)); every release ships it as `filmcraft-web-<version>.zip`.
+- **Android:** the same engine and UI on phones, tablets and Chromebooks (`apps/filmcraft-android`, see [its README](apps/filmcraft-android/README.md)): Vulkan or OpenGL ES, MediaCodec hardware decoding, AAudio, touch gestures, and media opened in place from shared storage.
 - **Swappable UI.** The interface is one crate (`ui-egui`) over the engine, so a different front end can replace it without touching editing logic.
 
 <br>
@@ -407,6 +408,15 @@ emerge --ask media-video/filmcraft-bin
 | Build | File | Notes |
 |---|---|---|
 | Static site | `filmcraft-web-<ver>.zip` | Runs in a modern browser; host it on any static server |
+
+### Android
+
+| Build | File | Notes |
+|---|---|---|
+| 64-bit ARM | `FilmCraft-<ver>-arm64-v8a.apk` | Android 9 or later; phones and tablets |
+| x86_64 | `FilmCraft-<ver>-x86_64.apk` | Emulators and Chromebooks |
+
+Built by the `Android` workflow (artifacts of each run, and a release for each `v*` tag), or locally with `apps/filmcraft-android/build.sh` (see [its README](apps/filmcraft-android/README.md)).
 
 ## The Crafting Apps
 
