@@ -8,7 +8,7 @@ It is the one crate of the workspace allowed to contain `unsafe`, under the rule
 
 ```rust
 // at startup (the desktop app, filmcraft-cli, the bench)
-let availability = filmcraft_platform::register(); // Available("VideoToolbox") on macOS, Available("Media Foundation") on Windows, Available("VA-API") on Linux with a driver
+let availability = filmcraft_platform::register(); // Available("VideoToolbox") on macOS, Available("Media Foundation") on Windows, Available("VA-API") on Linux with a driver, Available("MediaCodec") on Android
 ```
 
 ## What it does
@@ -121,6 +121,21 @@ let availability = filmcraft_platform::register(); // Available("VideoToolbox") 
     15 HEVC reference frames, any driver error.
   - An HEVC `flush` ends the stream as in software (references are dropped and the next CRA
     leaves out its RASL pictures); the GOP cache always seeks after a flush.
+- **Android: MediaCodec, H.264 (`avcC`) and HEVC (`hvcC`)**, 8-bit 4:2:0 progressive, on a
+  hardware codec only (Android's own `c2.android.*` / `OMX.google.*` software codecs are declined:
+  they are no faster than ours) (`android/mediacodec.rs`, through the `ndk` crate's safe bindings).
+  The codec is configured from the sample entry's parameter sets (`csd-0` / `csd-1`) and renders into
+  an `AImageReader` of `YUV_420_888` images, whose planes and strides are described per image (unlike
+  MediaCodec's vendor-specific byte buffers); each picture is acquired right after it is rendered
+  and copied into planar `Yuv8` at the stream's conformance window. Samples go in as Annex B
+  (`annexb.rs`). MediaCodec returns pictures in presentation order; a run starting at an HEVC CRA
+  leaves out its RASL pictures, as our decoder does. `flush` drains to the end of stream, after which
+  MediaCodec needs restarting: the samples since the last restart point are kept (bounded) and
+  replayed into the flushed codec when decoding continues, pictures already returned dropped. At
+  most six sessions are open at once (devices have few, shared with the camera); beyond that the
+  factory declines. `reset` flushes the codec. The same module's neighbour `android/jni.rs` holds the
+  JNI calls the Android app needs from its activity (permissions, storage volumes, clipboard, soft
+  keyboard): JNI is FFI, so it lives here.
 - **Other systems:** `register()` does nothing and returns `Availability::Unavailable`.
 - **`HybridDecoder`** (`hybrid.rs`, safe code): the hardware decoder plus the means to build our
   software decoder for the same `SampleEntry` (`filmcraft_codecs::software_video_decoder`). On a

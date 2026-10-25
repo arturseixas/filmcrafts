@@ -4,7 +4,8 @@
 //! [`register`] puts the platform's hardware decoder factory in front of FilmCraft's own decoders
 //! (`filmcraft_codecs::register_video_decoder`). Today that is VideoToolbox on macOS for H.264
 //! (`avcC`) and HEVC (`hvcC`) streams, 8- and 10-bit, 4:2:0 and 4:2:2; Media Foundation / DXVA on
-//! Windows; NVDEC ([`nvdec`], NVIDIA's driver) and VA-API ([`vaapi`]) on Linux for H.264 and HEVC; on other systems (and on
+//! Windows; NVDEC ([`nvdec`], NVIDIA's driver) and VA-API ([`vaapi`]) on Linux for H.264 and HEVC; MediaCodec
+//! on Android for 8-bit 4:2:0 H.264 and HEVC (`android::mediacodec`); on other systems (and on
 //! Linux with neither) registration does nothing and reports [`Availability::Unavailable`]. It also registers a
 //! hardware H.264 encoder factory (`filmcraft_export::register_encoder`) that only acts when an
 //! export asks for it (`ExportSettings::hardware_encoding` = `Auto`), see [`hardware_encode`]; on
@@ -28,9 +29,11 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
-// Used by the Windows (and, for `biplanar`, Linux) decoders; compiled everywhere so their tests run
-// on every system.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+// Used by the Windows and Android (and, for `biplanar`, Linux) decoders; compiled everywhere so
+// their tests run on every system.
+#[cfg(target_os = "android")]
+pub mod android;
+#[cfg_attr(not(any(target_os = "windows", target_os = "android")), allow(dead_code))]
 mod annexb;
 #[cfg_attr(not(any(target_os = "windows", target_os = "linux")), allow(dead_code))]
 mod biplanar;
@@ -132,7 +135,13 @@ pub fn register() -> Availability {
         }
         available
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "android")]
+    {
+        filmcraft_codecs::register_video_decoder(mediacodec_factory);
+        filmcraft_codecs::hw::set_hw_backend("MediaCodec");
+        Availability::Available("MediaCodec")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux", target_os = "android")))]
     {
         Availability::Unavailable("no hardware video decoder for this system yet")
     }
@@ -156,7 +165,11 @@ pub fn registered() -> bool {
         }
         filmcraft_codecs::video_decoder_registered(vaapi_factory)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "android")]
+    {
+        filmcraft_codecs::video_decoder_registered(mediacodec_factory)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux", target_os = "android")))]
     {
         false
     }
@@ -183,7 +196,11 @@ pub fn hardware_decoder_for(entry: &filmcraft_isobmff::SampleEntry) -> bool {
             vaapi::VaDecoder::new(info).is_ok()
         })
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "android")]
+    {
+        filmcraft_codecs::hw::NalStreamInfo::from_entry(entry).and_then(|r| r.ok()).is_some_and(|info| android::mediacodec::McDecoder::new(info).is_ok())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux", target_os = "android")))]
     {
         let _ = entry;
         false
@@ -262,6 +279,25 @@ pub fn nvdec_factory(entry: &filmcraft_isobmff::SampleEntry) -> Option<filmcraft
             if !filmcraft_codecs::video_decoder_registered(vaapi_factory) {
                 filmcraft_codecs::hw::note_hw_declined();
             }
+            None
+        }
+    }
+}
+
+/// The MediaCodec factory: a [`HybridDecoder`] around [`android::mediacodec::McDecoder`] for
+/// 8-bit 4:2:0 H.264 and HEVC streams one of this device's hardware decoders takes, `None`
+/// otherwise (and while all hardware sessions are in use).
+#[cfg(target_os = "android")]
+pub fn mediacodec_factory(entry: &filmcraft_isobmff::SampleEntry) -> Option<filmcraft_codecs::Result<Box<dyn filmcraft_codecs::VideoDecoder>>> {
+    if !filmcraft_codecs::hw::hardware_decoding() {
+        return None;
+    }
+    let info = filmcraft_codecs::hw::NalStreamInfo::from_entry(entry)?.ok()?;
+    match android::mediacodec::McDecoder::new(info.clone()) {
+        Ok(mc) => Some(Ok(Box::new(HybridDecoder::new(Box::new(mc), entry.clone(), info)))),
+        Err(why) => {
+            log::info!("hardware decoding declined for {} video: {why}", entry.codec.name());
+            filmcraft_codecs::hw::note_hw_declined();
             None
         }
     }

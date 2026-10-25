@@ -27,7 +27,7 @@ filmcraft-export = { workspace = true }
 filmcraft-gpu = { workspace = true }
 filmcraft-scopes = { workspace = true }
 egui = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "clipboard"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "clipboard"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -37,6 +37,12 @@ web-time = "1"
 unicode-bidi = "0.3.18"
 # ArtCraft wordmark (PNG) for the About dialog and Home screen.
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+# The platform accessibility adapter (AccessKit) everywhere but Android: eframe offers it there
+# only with GameActivity, and the Android app runs on NativeActivity (apps/filmcraft-android).
+# egui itself always builds the AccessKit tree, so automation ids and roles are unchanged.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+eframe = { workspace = true, features = ["accesskit"] }
 
 # Thread/process CPU clocks for frame-job profiling (safe wrappers; see frames.rs).
 [target.'cfg(unix)'.dependencies]
