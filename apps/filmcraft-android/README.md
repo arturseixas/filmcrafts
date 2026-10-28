@@ -44,6 +44,22 @@ pictures and music. Without either, FilmCraft works inside its own folder
 
 ## Using it on a touch screen
 
+**Which interface.** A tablet (a screen 600 dp or more on its short side, such as the Galaxy Tab S9
+Ultra) gets the **desktop interface**: the header with the File … Help menus, the docked panels
+(Source, Program, Project, Timeline, Effect Controls …), workspaces and every keyboard shortcut,
+for a mouse and keyboard. Touch works there too (see below). A phone gets the **phone layout**
+described next. The choice follows the screen size every frame (split screen, folding).
+
+**Mouse and keyboard.** A mouse has hover, left, right and middle buttons and the wheel (Ctrl +
+wheel zooms the timeline), and the keyboard's Ctrl, Shift, Alt and Meta reach the shortcuts: Ctrl+Z,
+comma and period to insert and overwrite, J K L, and so on. winit 0.30 reports every Android pointer
+as a touch and has no modifier events, so the repository carries a small patch of it
+(`third_party/winit`, `PATCHES.md` F1).
+
+**Speed ramps on the desktop interface.** Effect Controls ▸ Time Remapping ▸ Speed has the
+stopwatch and keyframes like any effect; Clip ▸ Speed Ramp has ready-made shapes (slow to fast, hero
+time, bullet time …) that keep the clip's length and picture, and *Remove Speed Ramp*.
+
 **The phone layout** replaces the desktop panels with what an edit needs, in dp-sized controls:
 the **Program** picture and its transport on top (in landscape on the left), the **Timeline**
 under it (on the right), a bar with Undo, Redo and **Export** above, and a **tool strip** along the

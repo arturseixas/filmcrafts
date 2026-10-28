@@ -6,6 +6,9 @@
 use filmcraft_edit::{EditError, Result};
 use filmcraft_project::{ClipId, Interpolation, Keyframe, Param, ParamValue, Sequence};
 use filmcraft_time::Tick;
+use serde_json::{Value, json};
+
+use crate::Session;
 
 /// Preset ramps: id, label, and the shape as (position along the media 0..=1, relative speed %).
 pub const PRESETS: &[(&str, &str, &[(f64, f64)])] = &[
@@ -108,4 +111,33 @@ pub fn edit_key(q: &mut Sequence, clips: &[ClipId], media: Tick, value: Option<f
         }
     }
     Ok(())
+}
+
+/// `clip.speedRamp` (and the Clip ▸ Speed Ramp menu, which gives `preset`).
+pub(crate) fn run(s: &mut Session, p: &Value, preset: Option<&str>) -> crate::Result<Value> {
+    use crate::commands::{bad, bool_p, clips_p, str_p, with_links};
+    let keep = bool_p(p, "keepLength").unwrap_or(true);
+    let shape: Vec<(f64, f64)> = match (preset.or_else(|| str_p(p, "preset")), p.get("keys").and_then(Value::as_array)) {
+        (Some("none"), _) => Vec::new(),
+        (Some(name), _) => self::preset(name).ok_or_else(|| bad("clip.speedRamp", format!("unknown preset `{name}`")))?.to_vec(),
+        (None, Some(keys)) => keys
+            .iter()
+            .map(|k| {
+                let pair = k.as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
+                pair.ok_or_else(|| bad("clip.speedRamp", "each key is [position, speed %]"))
+            })
+            .collect::<std::result::Result<_, _>>()?,
+        (None, None) => return Err(bad("clip.speedRamp", "need `preset` or `keys`")),
+    };
+    // a clip and its linked partners ramp as one, so picture and sound stay in sync
+    let sel = with_links(s, &clips_p(s, p));
+    let changed = s.edit_sequence("Speed Ramp", |q, _, _| {
+        for c in &sel {
+            if q.find_item(*c).and_then(|(t, _)| q.track(t)).is_some_and(|t| t.locked) {
+                return Err(EditError::Locked.into());
+            }
+        }
+        Ok(apply(q, &sel, &shape, keep)?)
+    })?;
+    Ok(json!({"clips": changed, "keys": shape.len()}))
 }

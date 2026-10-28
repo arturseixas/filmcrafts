@@ -39,10 +39,15 @@ fn phone(project: impl FnOnce(&mut Session)) -> Harness<'static, Phone> {
 }
 
 fn phone_sized(px: (f32, f32), project: impl FnOnce(&mut Session)) -> Harness<'static, Phone> {
+    screen(px, DENSITY, project)
+}
+
+/// A screen of `px` physical pixels at `density`.
+fn screen(px: (f32, f32), density: f32, project: impl FnOnce(&mut Session)) -> Harness<'static, Phone> {
     let mut s = Session::default();
     project(&mut s);
-    let size = egui::vec2(px.0, px.1) / DENSITY;
-    let mut h = Harness::builder().with_size(size).with_pixels_per_point(DENSITY).with_max_steps(10_000).wgpu().build_eframe(move |_cc| Phone {
+    let size = egui::vec2(px.0, px.1) / density;
+    let mut h = Harness::builder().with_size(size).with_pixels_per_point(density).with_max_steps(10_000).wgpu().build_eframe(move |_cc| Phone {
         app: FilmcraftApp::new(s),
         chrome: Chrome::default(),
         gestures: Default::default(),
@@ -394,4 +399,78 @@ fn the_export_screen_fits_a_phone_and_leads_back() {
     h.state_mut().app.ui.mode = filmcraft_ui_egui::state::Mode::Import;
     step(&mut h, 3);
     assert_eq!(h.state().app.ui.mode, filmcraft_ui_egui::state::Mode::Edit);
+}
+
+/// A Galaxy Tab S9 Ultra: 2960 x 1848 px at 2x, 1480 x 924 dp.
+const TABLET: (f32, f32) = (2960.0, 1848.0);
+
+#[test]
+fn a_tablet_gets_the_desktop_interface() {
+    let mut h = screen(TABLET, 2.0, |s| {
+        with_clips(s);
+    });
+    // the header with its menus, the docked panels, the status bar: the desktop layout
+    for id in ["header.mode.edit", "header.mode.export", "panel.Program", "panel.Timeline", "panel.Project"] {
+        assert!(control_exists(&h, id), "{id}");
+    }
+    assert!(!control_exists(&h, "phone.menu") && !control_exists(&h, "touchbar.add"), "no phone controls");
+    assert!(!h.state().app.touch_ui);
+    assert!((h.ctx.zoom_factor() - 1.0).abs() < 1e-6, "no zoom out on a screen this big");
+    // every panel has room to be used
+    for id in ["panel.Program", "panel.Timeline", "panel.Project"] {
+        let r = control_rect(&h, id);
+        assert!(r.width() >= 250.0 && r.height() >= 150.0, "{id} {r:?}");
+    }
+    shot(&mut h, "20-tablet");
+    // the phone beside it still gets its own layout
+    let h = phone(|s| {
+        with_clips(s);
+    });
+    assert!(control_exists(&h, "phone.menu"));
+}
+
+/// A mouse click, as winit reports a mouse on Android: pointer events, no touch.
+fn mouse_click(h: &mut Harness<'static, Phone>, at: egui::Pos2, button: egui::PointerButton) {
+    let ev = |pressed| egui::Event::PointerButton { pos: at, button, pressed, modifiers: egui::Modifiers::NONE };
+    h.input_mut().events.push(egui::Event::PointerMoved(at));
+    step(h, 2);
+    h.input_mut().events.push(ev(true));
+    step(h, 2);
+    h.input_mut().events.push(ev(false));
+    step(h, 4);
+}
+
+#[test]
+fn the_mouse_and_the_keyboard_drive_the_tablet_interface() {
+    let mut ids = Vec::new();
+    let mut h = screen(TABLET, 2.0, |s| ids = with_clips(s));
+    // a click on a Project item chooses it; a right-click opens its menu
+    let item = control_rect(&h, &format!("project.item.{}", ids[0].0)).center();
+    mouse_click(&mut h, item, egui::PointerButton::Primary);
+    assert_eq!(h.state().app.session.state.project_selection, vec![ids[0]]);
+    mouse_click(&mut h, item, egui::PointerButton::Secondary);
+    assert!(control_exists(&h, "project.itemMenu.label"), "a right-click opens the context menu");
+    shot(&mut h, "21-tablet-context-menu");
+    h.input_mut().events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
+    step(&mut h, 3);
+    // the mouse wheel scrolls (a hover first, as a mouse reports one)
+    let timeline = control_rect(&h, "panel.Timeline");
+    h.input_mut().events.push(egui::Event::PointerMoved(timeline.center()));
+    step(&mut h, 2);
+    h.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        source: egui::MouseWheelSource::Wheel,
+        delta: egui::vec2(0.0, -2.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    step(&mut h, 3);
+    // the keyboard: the comma key inserts the chosen clip, Ctrl+Z takes it back
+    let key = |k, modifiers| egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers };
+    h.input_mut().events.push(key(egui::Key::Comma, egui::Modifiers::NONE));
+    step(&mut h, 4);
+    let after_insert = video_clips(&h);
+    h.input_mut().events.push(key(egui::Key::Z, egui::Modifiers::COMMAND));
+    step(&mut h, 4);
+    assert!(video_clips(&h) < after_insert || after_insert == 0, "Ctrl+Z undoes: {} -> {}", after_insert, video_clips(&h));
 }

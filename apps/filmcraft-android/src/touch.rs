@@ -11,8 +11,8 @@
 //! - moving them together sends a scroll ([`egui::Event::MouseWheel`], trackpad-like): panels,
 //!   lists and the Timeline scroll.
 //!
-//! The translator replaces egui-winit's pointer events (on Android every pointer event comes from a
-//! touch) and keeps the [`egui::Event::Touch`] events, so egui's own touch handling (long press for
+//! The translator replaces egui-winit's pointer events that come from fingers (a mouse's pass
+//! through untouched) and keeps the [`egui::Event::Touch`] events, so egui's own touch handling (long press for
 //! context menus, `multi_touch`) still sees the fingers.
 
 use std::collections::{BTreeMap, VecDeque};
@@ -65,9 +65,12 @@ impl Gestures {
         } else if let Some(batch) = self.later.pop_front() {
             out.extend(batch);
         }
+        // Pointer events that come with a finger are egui-winit's copy of it, replaced below; with
+        // none (winit reports a mouse as a mouse) they are the mouse and pass through.
+        let fingers = !self.touches.is_empty() || events.iter().any(|e| matches!(e, Event::Touch { .. }));
         for e in std::mem::take(events) {
             match e {
-                Event::PointerMoved(_) | Event::PointerButton { .. } | Event::PointerGone => {}
+                Event::PointerMoved(_) | Event::PointerButton { .. } | Event::PointerGone if fingers => {}
                 Event::Touch { id, phase, pos, .. } => {
                     out.push(e);
                     self.touch(id.0, phase, pos, now, &mut out);
@@ -312,13 +315,27 @@ mod tests {
     }
 
     #[test]
-    fn native_pointer_events_are_replaced() {
+    fn a_mouse_passes_through_and_a_fingers_pointer_copy_is_replaced() {
         let mut g = Gestures::default();
+        let (at, other) = (egui::pos2(1.0, 1.0), egui::pos2(5.0, 5.0));
+        let mouse = vec![Event::PointerMoved(at), press(at, true, Modifiers::NONE), Event::Text("a".into())];
+        assert_eq!(run(&mut g, mouse.clone(), Instant::now()), mouse, "no finger: the mouse");
+        // a finger's batch carries egui-winit's pointer copy of it, which the translator replaces
+        let now = Instant::now();
         let out = run(
             &mut g,
-            vec![Event::PointerMoved(egui::pos2(1.0, 1.0)), press(egui::pos2(1.0, 1.0), true, Modifiers::NONE), Event::Text("a".into())],
-            Instant::now(),
+            vec![
+                Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(1), phase: TouchPhase::Start, pos: other, force: None },
+                Event::PointerMoved(other),
+            ],
+            now,
         );
-        assert_eq!(out, vec![Event::Text("a".into())]);
+        assert!(
+            out.iter().all(|e| !matches!(e, Event::PointerButton { .. })) && out.iter().filter(|e| matches!(e, Event::PointerMoved(_))).count() == 1,
+            "{out:?}"
+        );
+        // while the finger is down, pointer events are its copy too
+        let out = run(&mut g, vec![Event::PointerMoved(at)], now);
+        assert!(out.is_empty(), "{out:?}");
     }
 }

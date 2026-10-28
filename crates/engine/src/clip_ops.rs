@@ -209,6 +209,30 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             has_selection,
             |s, p| set_interpolation(s, p, TimeInterpolation::OpticalFlow),
         ),
+        spec("clip.speedRamp.slowToFast", "Slow to Fast", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("slowToFast"))
+        }),
+        spec("clip.speedRamp.fastToSlow", "Fast to Slow", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("fastToSlow"))
+        }),
+        spec("clip.speedRamp.easeInOut", "Slow, Fast, Slow", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("easeInOut"))
+        }),
+        spec("clip.speedRamp.montage", "Fast, Slow, Fast", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("montage"))
+        }),
+        spec("clip.speedRamp.hero", "Hero Time", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("hero"))
+        }),
+        spec("clip.speedRamp.bullet", "Bullet Time", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("bullet"))
+        }),
+        spec("clip.speedRamp.pulse", "Pulse", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("pulse"))
+        }),
+        spec("clip.speedRamp.none", "Remove Speed Ramp", &["Clip", "Speed Ramp"], None, r#"{"clips":[id]?}"#, has_selection, |s, p| {
+            crate::speed_ramp::run(s, p, Some("none"))
+        }),
         spec(
             "clip.setTimeInterpolation",
             "Set Time Interpolation",
@@ -304,6 +328,14 @@ pub(crate) fn apply_layout(v: &mut Vec<CommandSpec>) {
                 "clip.timeInterpolation.frameSampling",
                 "clip.timeInterpolation.frameBlending",
                 "clip.timeInterpolation.opticalFlow",
+                "clip.speedRamp.slowToFast",
+                "clip.speedRamp.fastToSlow",
+                "clip.speedRamp.easeInOut",
+                "clip.speedRamp.montage",
+                "clip.speedRamp.hero",
+                "clip.speedRamp.bullet",
+                "clip.speedRamp.pulse",
+                "clip.speedRamp.none",
                 "clip.scaleToFrameSize",
                 "clip.fitToFrame",
                 "clip.fillFrame",

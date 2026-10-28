@@ -1935,36 +1935,11 @@ fn build() -> Vec<CommandSpec> {
         cmd!(
             "clip.speedRamp",
             "Speed Ramp",
-            ["Clip"],
+            [],
             None,
             r#"{"clips":[id]?,"preset":"slowToFast|fastToSlow|easeInOut|montage|hero|bullet|pulse|none"?,"keys":[[position 0..1 along the clip's media, speed %]]? (instead of a preset),"keepLength":bool=true (scale the speeds so the clip plays the same media in the same time)}"#,
             has_selection,
-            |s, p| {
-                let keep = bool_p(p, "keepLength").unwrap_or(true);
-                let shape: Vec<(f64, f64)> = match (str_p(p, "preset"), p.get("keys").and_then(Value::as_array)) {
-                    (Some("none"), _) => Vec::new(),
-                    (Some(name), _) => crate::speed_ramp::preset(name).ok_or_else(|| bad("clip.speedRamp", format!("unknown preset `{name}`")))?.to_vec(),
-                    (None, Some(keys)) => keys
-                        .iter()
-                        .map(|k| {
-                            let pair = k.as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
-                            pair.ok_or_else(|| bad("clip.speedRamp", "each key is [position, speed %]"))
-                        })
-                        .collect::<std::result::Result<_, _>>()?,
-                    (None, None) => return Err(bad("clip.speedRamp", "need `preset` or `keys`")),
-                };
-                // a clip and its linked partners ramp as one, so picture and sound stay in sync
-                let sel = with_links(s, &clips_p(s, p));
-                let changed = s.edit_sequence("Speed Ramp", |q, _, _| {
-                    for c in &sel {
-                        if q.find_item(*c).and_then(|(t, _)| q.track(t)).is_some_and(|t| t.locked) {
-                            return Err(edit::EditError::Locked.into());
-                        }
-                    }
-                    Ok(crate::speed_ramp::apply(q, &sel, &shape, keep)?)
-                })?;
-                Ok(json!({"clips": changed, "keys": shape.len()}))
-            }
+            |s, p| crate::speed_ramp::run(s, p, None)
         ),
         cmd!(
             "clip.speedRampKey",

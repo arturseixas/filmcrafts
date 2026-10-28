@@ -135,16 +135,16 @@ impl AndroidShell {
             let p = Path::new(&path);
             if crate::exports::is_private(p, &private) && crate::exports::publishable(p) {
                 match jni::publish_to_gallery(&path) {
-                    Ok(()) => crate::phone::notify(ctx, filmcraft_ui_egui::i18n::t("Export finished: saving it to your Gallery…"), false),
-                    Err(e) => crate::phone::notify(ctx, e, true),
+                    Ok(()) => crate::phone::say(&mut self.app, ctx, filmcraft_ui_egui::i18n::t("Export finished: saving it to your Gallery…"), false),
+                    Err(e) => crate::phone::say(&mut self.app, ctx, e, true),
                 }
             } else {
-                crate::phone::notify(ctx, format!("{} {path}", filmcraft_ui_egui::i18n::t("Export finished:")), false);
+                crate::phone::say(&mut self.app, ctx, format!("{} {path}", filmcraft_ui_egui::i18n::t("Export finished:")), false);
             }
         }
         match jni::take_publish_result() {
-            Some(Ok(at)) => crate::phone::notify(ctx, format!("{} {at}", filmcraft_ui_egui::i18n::t("Saved to")), false),
-            Some(Err(e)) => crate::phone::notify(ctx, e, true),
+            Some(Ok(at)) => crate::phone::say(&mut self.app, ctx, format!("{} {at}", filmcraft_ui_egui::i18n::t("Saved to")), false),
+            Some(Err(e)) => crate::phone::say(&mut self.app, ctx, e, true),
             None => {}
         }
     }

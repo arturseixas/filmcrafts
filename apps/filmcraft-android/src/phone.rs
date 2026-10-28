@@ -138,6 +138,14 @@ pub fn notify(ctx: &egui::Context, text: impl Into<String>, error: bool) {
     ctx.request_repaint();
 }
 
+/// Say something in whichever interface is in use: a toast on the phone layout, the status bar
+/// on the desktop one.
+pub fn say(app: &mut FilmcraftApp, ctx: &egui::Context, text: impl Into<String>, error: bool) {
+    let text = text.into();
+    app.ui.status = text.clone();
+    notify(ctx, text, error);
+}
+
 /// Tell the layout whether the soft keyboard is up.
 pub fn set_keyboard(ctx: &egui::Context, up: bool) {
     let mut s = load(ctx);
