@@ -3586,3 +3586,62 @@
 	Open a sequence to search its graphics	Abra uma sequência para pesquisar nos gráficos dela
 	No text graphics in this sequence. Add text with the Type tool.	Esta sequência não tem gráficos com texto. Adicione texto com a ferramenta Texto.
 	No matching text.	Nenhum texto corresponde.
+
+# Android touch interface (apps/filmcraft-android)
+	Insert at the playhead	Inserir no cursor de reprodução
+	Overwrite at the playhead	Sobrescrever no cursor de reprodução
+	Zoom −	Zoom −
+	Zoom +	Zoom +
+	Save project	Salvar projeto
+	Interface larger	Interface maior
+	Interface smaller	Interface menor
+	Hide this bar	Ocultar esta barra
+	Saved	Salvo
+	The interface is as large as it gets	A interface já está no tamanho máximo
+	The interface is as small as it gets	A interface já está no tamanho mínimo
+	Interface size	Tamanho da interface
+	Tap a clip in the Project panel first, then tap Add	Toque em um clipe no painel Projeto e depois em Adicionar
+	New timeline made:	Nova linha do tempo criada:
+	clip added	clipe adicionado
+	clips added	clipes adicionados
+	There is no timeline yet: add a clip first	Ainda não há linha do tempo: adicione um clipe primeiro
+	Cut at the playhead	Cortado no cursor de reprodução
+	Tap a clip on the timeline first, then tap Delete	Toque em um clipe na linha do tempo e depois em Excluir
+	clip deleted	clipe excluído
+	clips deleted	clipes excluídos
+	Import Media	Importar mídia
+	Open Project	Abrir projeto
+	Locate Media	Localizar mídia
+	Choose Folder	Escolher pasta
+	Gallery	Galeria
+	Files app	App Arquivos
+	Pick videos and photos from your Gallery or the Files app (cloud drives, SD cards): no storage access needed	Escolha vídeos e fotos da Galeria ou do app Arquivos (nuvem, cartão SD): não precisa de acesso ao armazenamento
+	Copying	Copiando
+	Waiting for your choice in the picker…	Aguardando sua escolha no seletor…
+	Internal storage	Armazenamento interno
+	Storage	Armazenamento
+	FilmCraft folder	Pasta do FilmCraft
+	Camera	Câmera
+	Movies	Filmes
+	Download	Downloads
+	Documents	Documentos
+	Pictures	Imagens
+	Up	Acima
+	This folder can't be read without storage access	Esta pasta não pode ser lida sem acesso ao armazenamento
+	FilmCraft can read your videos, pictures and music. Allow access to all files to open projects and save anywhere.	O FilmCraft pode ler seus vídeos, fotos e músicas. Permita o acesso a todos os arquivos para abrir projetos e salvar em qualquer lugar.
+	Allow FilmCraft to read your files to import media and open projects. Until then it uses its own folder.	Permita que o FilmCraft leia seus arquivos para importar mídia e abrir projetos. Até lá, ele usa a própria pasta.
+	Allow FilmCraft to save to Movies and Documents. Until then it saves inside its own folder, which other apps can't see.	Permita que o FilmCraft salve em Filmes e Documentos. Até lá, ele salva na própria pasta, que outros apps não veem.
+	Allow access to all files	Permitir acesso a todos os arquivos
+	Media only	Somente mídia
+	Show all files	Mostrar todos os arquivos
+	Newest first	Mais recentes primeiro
+	Select all	Selecionar tudo
+	Choose this folder	Escolher esta pasta
+	Replace	Substituir
+	already exists. Press Replace to overwrite it.	já existe. Toque em Substituir para sobrescrevê-lo.
+	No matching files in this folder	Nenhum arquivo compatível nesta pasta
+	Tap a clip to select it. Press and hold for more options. Two fingers scroll and zoom.	Toque em um clipe para selecioná-lo. Mantenha pressionado para mais opções. Dois dedos rolam e dão zoom.
+	Import clips, tap one in the Project panel, then tap Add below.	Importe clipes, toque em um no painel Projeto e depois em Adicionar, abaixo.
+	Make the timeline from the chosen clips:	Criar a linha do tempo com os clipes escolhidos:
+	Make timeline	Criar linha do tempo
+	FilmCraft needs microphone access to record: allow it, then record again	O FilmCraft precisa de acesso ao microfone para gravar: permita e grave de novo

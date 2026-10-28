@@ -371,11 +371,24 @@ pub fn range_param(s: &Session, project: &Project, seq: ItemId, v: Option<&Value
     Ok(Some(range))
 }
 
-/// Where exports go when no path is given: next to the saved project, else ~/Movies, else the
-/// home directory, else the temporary directory.
+/// The folder a host wants exports to go to when the project has no folder yet (Android: Movies,
+/// or the app's own folder before storage access is allowed), instead of the home directory.
+static DEFAULT_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Set (or clear) the host's default export folder, see [`default_export_dir`].
+pub fn set_default_export_dir(dir: Option<PathBuf>) {
+    *DEFAULT_DIR.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = dir;
+}
+
+/// Where exports go when no path is given: next to the saved project, else the host's folder
+/// ([`set_default_export_dir`]), else ~/Movies, else the home directory, else the temporary
+/// directory.
 pub fn default_export_dir(s: &Session) -> PathBuf {
     if let Some(d) = s.path.as_deref().and_then(|p| Path::new(p).parent()).filter(|d| !d.as_os_str().is_empty()) {
         return d.to_path_buf();
+    }
+    if let Some(d) = DEFAULT_DIR.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
+        return d;
     }
     if cfg!(target_arch = "wasm32") {
         // the web build's virtual file table: written files are offered as downloads

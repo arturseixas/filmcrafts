@@ -818,8 +818,37 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let _ = (visible, TICKS_PER_SECOND);
 }
 
-/// Shown when no sequence is open: offers the demo project and accepts project or OS-file drops to create a sequence.
-fn empty_state(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+/// [`empty_state`] on a touch screen, where nothing can be dropped: say how to put clips on the
+/// timeline, and offer to make it from the clips chosen in the Project panel.
+fn empty_state_touch(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let t = app.tokens;
+    let chosen: Vec<u64> = app.session.state.project_selection.iter().filter(|i| app.session.project.item(**i).is_some()).map(|i| i.0).collect();
+    let text = if chosen.is_empty() {
+        tl!("Import clips, tap one in the Project panel, then tap Add below.")
+    } else {
+        tl!("Make the timeline from the chosen clips:")
+    };
+    ui.painter().text(rect.center() - vec2(0.0, 16.0), Align2::CENTER_CENTER, text, Tokens::ui(13.0), t.text_dim);
+    let b = Rect::from_center_size(rect.center() + vec2(0.0, 22.0), vec2(220.0, 30.0));
+    let resp = ui.interact(b, egui::Id::unique("tl-touch-start"), Sense::click());
+    let label = if chosen.is_empty() { tl!("Open Demo Project") } else { tl!("Make timeline") };
+    app.auto.add("timeline.touchStart", b, label);
+    ui.painter().rect_filled(b, 15.0, if resp.hovered() { t.accent_hover } else { t.accent });
+    ui.painter().text(b.center(), Align2::CENTER_CENTER, label, Tokens::semibold(13.0), Color32::WHITE);
+    if resp.clicked() {
+        let r = if chosen.is_empty() {
+            app.session.execute("file.openDemoProject", json!({}))
+        } else {
+            app.session.execute("file.newSequence", json!({"fromItems": chosen}))
+        };
+        if let Err(e) = r {
+            app.ui.status = e.to_string();
+        }
+    }
+}
+
+/// [`empty_state`] with a mouse: say what to drop, and offer the demo project.
+fn empty_state_desktop(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     ui.painter().text(rect.center() - vec2(0.0, 12.0), Align2::CENTER_CENTER, tl!("Drop media here to create sequence."), Tokens::ui(13.0), t.text_dim);
     if app.session.project.items.values().any(|i| matches!(i.kind, filmcraft_project::ItemKind::Sequence(_))) {
@@ -833,6 +862,15 @@ fn empty_state(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     ui.painter().text(b.center(), Align2::CENTER_CENTER, tl!("Open Demo Project"), Tokens::semibold(12.0), Color32::WHITE);
     if resp.clicked() {
         let _ = app.session.execute("file.openDemoProject", json!({}));
+    }
+}
+
+/// Shown when no sequence is open: offers the demo project and accepts project or OS-file drops to create a sequence.
+fn empty_state(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    if app.touch_ui {
+        empty_state_touch(app, ui, rect);
+    } else {
+        empty_state_desktop(app, ui, rect);
     }
     // accept drops from the project panel
     if let Some(item) = crate::panels::dragged_project_item(ui)

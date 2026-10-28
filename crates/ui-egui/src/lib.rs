@@ -423,6 +423,9 @@ pub struct FilmcraftApp {
     pub quit_confirmed: bool,
     fonts_ready: bool,
     pub integrated_titlebar: bool,
+    /// The host is a touch screen without mouse or keyboard (Android): hints and empty states say
+    /// "tap" and "press and hold", not "click" and "drag".
+    pub touch_ui: bool,
     pub last_timeline_width: f32,
     /// The sequence whose view `ui.timeline` holds, and that view as it was last exchanged with
     /// `session.state.timeline_views` (see `sync_timeline_view`).
@@ -683,6 +686,7 @@ impl FilmcraftApp {
             quit_confirmed: false,
             fonts_ready: false,
             integrated_titlebar: false,
+            touch_ui: false,
             last_timeline_width: 1000.0,
             timeline_view_of: None,
             pending_timeline_drop: None,
@@ -1665,6 +1669,13 @@ impl FilmcraftApp {
                     {
                         app.ui.status = errs.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; ");
                     }
+                    // the imported items are selected, as after a drop: ready to place on the timeline
+                    if let Ok(v) = &r
+                        && let Some(items) = v.get("items").and_then(Value::as_array)
+                        && !items.is_empty()
+                    {
+                        let _ = app.session.execute("project.select", json!({"items": items}));
+                    }
                     r
                 })
             }
@@ -2220,6 +2231,9 @@ impl FilmcraftApp {
     /// Contextual hint for the status bar (Premiere shows tool/gesture hints here).
     fn hint_text(&self) -> String {
         let mac = cfg!(target_os = "macos");
+        if self.touch_ui && self.ui.tool == state::Tool::Selection {
+            return tl!("Tap a clip to select it. Press and hold for more options. Two fingers scroll and zoom.").to_string();
+        }
         match self.ui.tool {
             state::Tool::Selection if mac => {
                 tl!("Click to select, or click in empty space and drag to marquee select. Use Shift, Opt, and Cmd for other options.")

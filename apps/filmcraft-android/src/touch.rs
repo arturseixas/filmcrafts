@@ -15,7 +15,7 @@
 //! touch) and keeps the [`egui::Event::Touch`] events, so egui's own touch handling (long press for
 //! context menus, `multi_touch`) still sees the fingers.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use egui::{Event, Modifiers, Pos2, TouchPhase, Vec2};
@@ -41,8 +41,11 @@ pub struct Gestures {
     primary: Option<Primary>,
     /// Two-finger gesture: the fingers' last distance and midpoint.
     pinch: Option<(f32, Pos2)>,
-    /// A tap's release, sent a frame after its press (widgets see the press first).
-    release_next: Option<Pos2>,
+    /// Events for the frames after this one, one batch per frame: a tap's release, then the
+    /// pointer leaving. Widgets read the pointer's position on the frame of the release (a drop on
+    /// the Timeline asks where the pointer is), which egui-winit's release-and-leave in one frame
+    /// would clear.
+    later: VecDeque<Vec<Event>>,
     /// The keyboard modifiers (a hardware keyboard), for the presses sent.
     modifiers: Modifiers,
 }
@@ -56,9 +59,11 @@ impl Gestures {
     /// to press a finger that is being held still, if one is.
     pub fn process(&mut self, events: &mut Vec<Event>, now: Instant) -> Option<Duration> {
         let mut out = Vec::with_capacity(events.len() + 4);
-        if let Some(p) = self.release_next.take() {
-            out.push(press(p, false, self.modifiers));
-            out.push(Event::PointerGone);
+        // a new touch while earlier events wait: they all go first, so its press comes after them
+        if events.iter().any(|e| matches!(e, Event::Touch { phase: TouchPhase::Start, .. })) {
+            out.extend(self.later.drain(..).flatten());
+        } else if let Some(batch) = self.later.pop_front() {
+            out.extend(batch);
         }
         for e in std::mem::take(events) {
             match e {
@@ -173,18 +178,19 @@ impl Gestures {
                 match (p.pressed, phase) {
                     (true, TouchPhase::Cancel) => {
                         out.push(press(pos, false, modifiers));
-                        out.push(Event::PointerGone);
+                        self.later.push_back(vec![Event::PointerGone]);
                     }
                     (true, _) => {
                         out.push(Event::PointerMoved(pos));
                         out.push(press(pos, false, modifiers));
-                        out.push(Event::PointerGone);
+                        self.later.push_back(vec![Event::PointerGone]);
                     }
-                    // a tap: press now, release next frame
+                    // a tap: the press now, the release next frame, then the pointer leaves
                     (false, TouchPhase::End) => {
                         out.push(Event::PointerMoved(p.start));
                         out.push(press(p.start, true, modifiers));
-                        self.release_next = Some(p.start);
+                        self.later.push_back(vec![press(p.start, false, modifiers)]);
+                        self.later.push_back(vec![Event::PointerGone]);
                     }
                     (false, _) => out.push(Event::PointerGone),
                 }
@@ -202,9 +208,9 @@ impl Gestures {
         }
     }
 
-    /// A release is waiting for the next frame.
+    /// Events are waiting for the next frames (the caller keeps the frames coming).
     pub fn pending(&self) -> bool {
-        self.release_next.is_some()
+        !self.later.is_empty()
     }
 }
 
@@ -238,7 +244,10 @@ mod tests {
         assert!(g.pending());
         let next = run(&mut g, vec![], t + Duration::from_millis(60));
         assert_eq!(presses(&next), vec![false]);
-        assert!(next.contains(&Event::PointerGone));
+        assert!(!next.contains(&Event::PointerGone), "the pointer is still there on the frame of the release");
+        let last = run(&mut g, vec![], t + Duration::from_millis(70));
+        assert!(last.contains(&Event::PointerGone));
+        assert!(!g.pending());
     }
 
     #[test]
@@ -254,6 +263,9 @@ mod tests {
         assert_eq!(moved.last(), Some(&Event::PointerMoved(egui::pos2(30.0, 10.0))));
         let up = run(&mut g, vec![touch(1, TouchPhase::End, 30.0, 10.0)], t + Duration::from_millis(40));
         assert_eq!(presses(&up), vec![false]);
+        assert!(up.contains(&Event::PointerMoved(egui::pos2(30.0, 10.0))), "released where the finger lifted");
+        assert!(!up.contains(&Event::PointerGone), "a drop reads the pointer's position on the frame of the release");
+        assert!(run(&mut g, vec![], t + Duration::from_millis(50)).contains(&Event::PointerGone));
     }
 
     #[test]

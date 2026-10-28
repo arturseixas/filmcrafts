@@ -15,8 +15,8 @@
 //! | keyboard | hardware keys through winit; the soft keyboard's text through the activity's input view |
 //! | system clipboard (text) | `ClipboardManager` through JNI |
 //!
-//! Everything but the touch gesture translator ([`touch`], tested on every target) is
-//! Android-only.
+//! Everything but the touch interface ([`touch_bar`], [`edit_actions`], [`chrome`], [`touch`]:
+//! plain egui over the session, tested on every target) is Android-only.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
 #[cfg(target_os = "android")]
@@ -34,6 +34,9 @@ pub mod gfx;
 #[cfg(target_os = "android")]
 pub mod log_sink;
 // The desktop app's log filter, rotation and file sink (its stderr logger is not used here).
+pub mod chrome;
+pub mod edit_actions;
+pub mod exports;
 #[cfg(target_os = "android")]
 #[allow(dead_code)]
 #[path = "../../filmcraft/src/logging.rs"]
@@ -41,3 +44,4 @@ mod logging;
 #[cfg(target_os = "android")]
 pub mod mic;
 pub mod touch;
+pub mod touch_bar;

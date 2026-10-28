@@ -1,7 +1,7 @@
 //! The Android app proper: `android_main`, the eframe app around the shared UI ([`AndroidShell`])
 //! and the app creator.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,11 +12,6 @@ use filmcraft_platform::android::jni;
 use filmcraft_ui_egui::FilmcraftApp;
 use serde_json::json;
 use winit::platform::android::activity::AndroidApp;
-
-/// The interface is laid out for at least this many points; smaller screens (phones) zoom it out
-/// while Settings ▸ Appearance ▸ UI Scale is Auto, down to [`MIN_AUTO_ZOOM`].
-const MIN_LOGICAL_SIZE: (f32, f32) = (1000.0, 520.0);
-const MIN_AUTO_ZOOM: f32 = 0.6;
 
 /// The entry point android-activity calls on its own thread once the activity is created (and
 /// again if Android recreates the activity in the same process).
@@ -96,36 +91,62 @@ struct AndroidShell {
     app: FilmcraftApp,
     browser: crate::file_browser::Browser,
     gestures: crate::touch::Gestures,
+    chrome: crate::chrome::Chrome,
     /// Events at the front of the raw input that this hook already rewrote: a logic-only pass
     /// leaves its input to the next pass, which offers it to the hook again ahead of new input.
     offered: usize,
     keyboard: bool,
     screen_on: bool,
-    /// The screen size (physical pixels), native scale and UI Scale setting the automatic zoom was
-    /// last decided for.
-    auto_zoom: Option<(egui::Vec2, f32, String)>,
+    exports: crate::exports::Watcher,
+    /// When the default export folder was last worked out (it follows the storage permission).
+    export_dir_checked: Option<std::time::Instant>,
+    export_dir: Option<PathBuf>,
 }
 
 impl AndroidShell {
-    /// Settings ▸ Appearance ▸ UI Scale ▸ Auto on a small screen: zoom the interface out so the
-    /// panels fit (a phone is about 870 × 390 points in landscape). Decided again when the screen
-    /// size or the setting changes, after the app's own UI Scale handling in the same pass (going
-    /// back to Auto resets the zoom there); a fixed UI Scale is left to the app.
-    fn apply_auto_zoom(&mut self, ctx: &egui::Context) {
-        let setting = &self.app.session.prefs.appearance.ui_scale;
-        let native = ctx.native_pixels_per_point().filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0);
-        let physical = ctx.input(|i| i.viewport_rect().size()) * ctx.pixels_per_point();
-        if physical.x < 1.0 || physical.y < 1.0 || self.auto_zoom.as_ref().is_some_and(|(p, n, s)| *p == physical && *n == native && s == setting) {
-            return;
+    /// Keep the default export folder in step with the storage permission, and move a finished
+    /// export out of the app's own folder into Movies (see [`crate::exports`]).
+    fn follow_exports(&mut self, ctx: &egui::Context) {
+        use std::time::{Duration, Instant};
+        if self.export_dir_checked.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
+            self.export_dir_checked = Some(Instant::now());
+            let roots = jni::storage_roots();
+            let app_dir = jni::app_storage_dir().map(PathBuf::from);
+            let dir = crate::exports::export_dir(jni::has_storage_access(), roots.first().map(Path::new), app_dir.as_deref());
+            if dir != self.export_dir {
+                if let Some(d) = &dir {
+                    let _ = std::fs::create_dir_all(d);
+                }
+                // the Export screen shows the folder it started with: follow the default
+                let old = self.export_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
+                if old.is_some() && old.as_deref() == Some(self.app.ui.export.location.as_str()) {
+                    self.app.ui.export.location = dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+                }
+                filmcraft_engine::export_tools::set_default_export_dir(dir.clone());
+                self.export_dir = dir;
+            }
+            ctx.request_repaint_after(Duration::from_secs(2));
         }
-        self.auto_zoom = Some((physical, native, setting.clone()));
-        if self.app.session.prefs.appearance.ui_scale_factor().is_some() {
-            return;
+        let mut private: Vec<PathBuf> = jni::app_storage_dir().map(PathBuf::from).into_iter().collect();
+        if let Some(home) = std::env::var_os("HOME") {
+            private.push(PathBuf::from(home));
         }
-        let points = physical / native;
-        let zoom = (points.x / MIN_LOGICAL_SIZE.0).min(points.y / MIN_LOGICAL_SIZE.1).clamp(MIN_AUTO_ZOOM, 1.0);
-        log::info!("screen {}x{} px at {native}x: interface zoom {zoom:.2}", physical.x, physical.y);
-        ctx.set_zoom_factor(zoom);
+        for path in self.exports.finished(&self.app.session) {
+            let p = Path::new(&path);
+            if crate::exports::is_private(p, &private) && crate::exports::publishable(p) {
+                match jni::publish_to_gallery(&path) {
+                    Ok(()) => self.chrome.bar.notify(ctx, filmcraft_ui_egui::i18n::t("Export finished: saving it to your Gallery…"), false),
+                    Err(e) => self.chrome.bar.notify(ctx, e, true),
+                }
+            } else {
+                self.chrome.bar.notify(ctx, format!("{} {path}", filmcraft_ui_egui::i18n::t("Export finished:")), false);
+            }
+        }
+        match jni::take_publish_result() {
+            Some(Ok(at)) => self.chrome.bar.notify(ctx, format!("{} {at}", filmcraft_ui_egui::i18n::t("Saved to")), false),
+            Some(Err(e)) => self.chrome.bar.notify(ctx, e, true),
+            None => {}
+        }
     }
 }
 
@@ -177,7 +198,8 @@ impl eframe::App for AndroidShell {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // this pass consumes its raw input: the next hook sees only new events
         self.offered = 0;
-        self.app.ui(ui, frame);
+        self.chrome.keyboard = jni::keyboard_height_px() as f32 / ui.ctx().pixels_per_point().max(0.1);
+        self.chrome.ui(&mut self.app, ui, frame);
         let ctx = ui.ctx().clone();
         self.browser.ui(&ctx);
         for cmd in ctx.output(|o| o.commands.clone()) {
@@ -195,7 +217,7 @@ impl eframe::App for AndroidShell {
             self.screen_on = screen_on;
             jni::set_keep_screen_on(screen_on);
         }
-        self.apply_auto_zoom(&ctx);
+        self.follow_exports(&ctx);
     }
 
     fn on_exit(&mut self) {
@@ -261,7 +283,18 @@ fn app_creator(data_dir: Option<PathBuf>, graphics: crate::gfx::GraphicsStart, c
         app.hooks.run_dialog = Some(browser.hook());
         app.hooks.open_url = Some(Box::new(jni::open_url));
         app.hooks.system_languages = Some(Box::new(jni::system_languages));
-        Ok(Box::new(AndroidShell { app, browser, gestures: crate::touch::Gestures::default(), offered: 0, keyboard: false, screen_on: false, auto_zoom: None }))
+        Ok(Box::new(AndroidShell {
+            app,
+            browser,
+            gestures: crate::touch::Gestures::default(),
+            chrome: crate::chrome::Chrome::default(),
+            offered: 0,
+            keyboard: false,
+            screen_on: false,
+            exports: Default::default(),
+            export_dir_checked: None,
+            export_dir: None,
+        }))
     })
 }
 

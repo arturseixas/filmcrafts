@@ -501,7 +501,9 @@ impl View {
         if !self.access.0 {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(if self.access.1 {
+                    ui.label(if self.mode == Mode::Save {
+                        t("Allow FilmCraft to save to Movies and Documents. Until then it saves inside its own folder, which other apps can't see.")
+                    } else if self.access.1 {
                         t("FilmCraft can read your videos, pictures and music. Allow access to all files to open projects and save anywhere.")
                     } else {
                         t("Allow FilmCraft to read your files to import media and open projects. Until then it uses its own folder.")

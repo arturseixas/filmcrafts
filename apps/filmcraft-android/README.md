@@ -44,15 +44,31 @@ pictures and music. Without either, FilmCraft works inside its own folder
 
 ## Using it on a touch screen
 
+**Putting clips on the timeline.** Import (see above), tap a clip in the Project panel (tap
+several to choose several), then tap **Add** in the touch bar along the bottom. The clips land back
+to back at the end of the timeline, and a timeline that does not exist yet is made from the first
+clip. The arrow next to Add offers *Insert at the playhead* and *Overwrite at the playhead*.
+Dragging a clip from the Project panel onto the timeline works too.
+
+**The touch bar** has what the desktop does with keyboard shortcuts and small icons, as 48 dp
+buttons: Import, Add, Play, frame back and forward, Split (cut at the playhead), Delete (removes
+the selected clips and closes the gap), Undo, Redo, timeline Zoom −, Zoom + and Fit, and ⋯ for
+Save, Export, Interface larger / smaller and Hide this bar (a small tab brings it back). The result of
+each tap shows above the bar for a few seconds. While the soft keyboard is up, the bar steps aside
+and the interface keeps above the keyboard.
+
 - The interface opens in landscape, full screen. On a phone, Settings ▸ Appearance ▸ UI Scale ▸ Auto
-  zooms it out so the panels fit. Pick a fixed scale there to make it larger or smaller.
+  zooms it out so the panels fit; ⋯ ▸ Interface larger / smaller (or a fixed UI Scale) changes it.
 - A tap clicks and a drag drags. **Press and hold** opens a context menu where the desktop uses a
-  right-click. Pinch to zoom where the desktop zooms with Ctrl + scroll.
+  right-click. **Two fingers** scroll panels and the timeline; spreading or pinching them zooms the
+  timeline.
 - The soft keyboard appears when a text field has focus, and any language or emoji types into it.
   A hardware keyboard (Bluetooth, USB, a Chromebook's) gets every desktop shortcut.
 - **Back** closes the file browser, a dialog or a menu (it acts as Escape). It never closes the app.
 - Projects auto-save, and the crash-recovery journal brings back unsaved changes if Android stops
   the app in the background.
+- Exports go where you choose in the save dialog; without storage access that is FilmCraft's own
+  folder, which other apps cannot see, so allow access to all files to export to Movies.
 
 ## Build
 
@@ -87,7 +103,8 @@ FilmcraftActivity.java (NativeActivity)    immersive full screen, soft-keyboard 
 libfilmcraft.so: android_main (src/lib.rs)
   ├─ eframe + winit (android-native-activity) → wgpu (Vulkan | GLES)       src/gfx.rs
   ├─ filmcraft_ui_egui::FilmcraftApp (the shared UI), wrapped by AndroidShell:
-  │     file browser (src/file_browser.rs), Back, soft keyboard, clipboard, phone zoom
+  │     touch bar and phone zoom (src/chrome.rs, touch_bar.rs, edit_actions.rs), touch gestures
+  │     (src/touch.rs), file browser (src/file_browser.rs), Back, soft keyboard, clipboard
   ├─ cpal / AAudio: the desktop app's audio.rs and audio_in.rs (+ src/mic.rs for the permission)
   ├─ logcat + file logger (src/log_sink.rs, the desktop logging.rs underneath)
   └─ filmcraft_platform::android: MediaCodec decoder, JNI calls      crates/platform/src/android

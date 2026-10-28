@@ -19,33 +19,39 @@ too_many_arguments = "allow"
 needless_range_loop = "allow"
 type_complexity = "allow"
 
-# libfilmcraft.so, loaded by FilmcraftActivity (java/) through NativeActivity. Everything but the
-# touch gesture translator is Android-only, so on other targets `cargo test --workspace` and clippy
-# only build that. Build the APK with `apps/filmcraft-android/build.sh` (see README.md there).
+# libfilmcraft.so, loaded by FilmcraftActivity (java/) through NativeActivity. Only the touch
+# interface (touch bar, edits, gestures) is built on other targets, so `cargo test --workspace` and
+# clippy cover it. Build the APK with `apps/filmcraft-android/build.sh` (see README.md there).
 [lib]
 name = "filmcraft"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# the touch gesture translator (src/touch.rs) is built and tested on every target
+# the touch bar, its edits and the touch gestures are built and tested on every target
 egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu"] }
+filmcraft-engine = { workspace = true }
+filmcraft-media = { workspace = true }
+filmcraft-project = { workspace = true }
+filmcraft-time = { workspace = true }
+filmcraft-ui-egui = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-filmcraft-engine = { workspace = true }
 filmcraft-export = { workspace = true }
-filmcraft-project = { workspace = true }
 filmcraft-render = { workspace = true }
-filmcraft-time = { workspace = true }
 filmcraft-gpu = { workspace = true }
-filmcraft-ui-egui = { workspace = true }
 filmcraft-platform = { workspace = true }
 # NativeActivity (not GameActivity): winit turns key events into text, and the activity's input
 # view (java/) delivers the soft keyboard's text; AccessKit's adapter needs GameActivity, so it is off.
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
 # The same winit as eframe, for `AndroidApp` (android-activity's handle on the activity).
 winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
-serde_json = { workspace = true }
-log = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 # AAudio output and input through the same cpal code as the desktop app (audio.rs, audio_in.rs).
 cpal = "0.16"

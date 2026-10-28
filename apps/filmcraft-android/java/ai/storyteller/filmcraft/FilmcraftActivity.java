@@ -56,6 +56,12 @@ public class FilmcraftActivity extends NativeActivity {
     /** Text the soft keyboard committed (any Unicode, emoji included): sent to egui as typed text. */
     private static native void nativeText(String text);
 
+    /** An export was copied into the Gallery (where, on success) or could not be (error). */
+    private static native void nativeExportPublished(String where, String error);
+
+    /** How tall the soft keyboard is in pixels (0: hidden), as it covers the bottom of the window. */
+    private static native void nativeKeyboardHeight(int pixels);
+
     /** Importing from the Gallery or Files: the file being copied and how far along it is. */
     private static native void nativeImportProgress(String name, int index, int count, long done, long total);
 
@@ -75,6 +81,7 @@ public class FilmcraftActivity extends NativeActivity {
 
     private final AtomicBoolean importCancelled = new AtomicBoolean();
     private volatile boolean importing;
+    private int keyboardPixels;
 
     private ImeView imeView;
 
@@ -84,6 +91,23 @@ public class FilmcraftActivity extends NativeActivity {
         imeView = new ImeView(this);
         addContentView(imeView, new ViewGroup.LayoutParams(1, 1));
         immersive();
+        // The window does not resize for the keyboard (it would resize the drawing surface on every
+        // key), so the app is told how much of the bottom it covers and keeps its fields above it.
+        final View decor = getWindow().getDecorView();
+        decor.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            android.graphics.Rect visible = new android.graphics.Rect();
+            decor.getWindowVisibleDisplayFrame(visible);
+            int height = decor.getRootView().getHeight();
+            int covered = height - visible.bottom;
+            // a system bar shown for a moment is not a keyboard
+            if (covered < height / 6) {
+                covered = 0;
+            }
+            if (covered != keyboardPixels) {
+                keyboardPixels = covered;
+                nativeKeyboardHeight(covered);
+            }
+        });
     }
 
     @Override
@@ -429,6 +453,78 @@ public class FilmcraftActivity extends NativeActivity {
             throw new IOException("Can't save " + name);
         }
         return target.getAbsolutePath();
+    }
+
+    // ------------------------------------------------------------------ export to the Gallery
+
+    /**
+     * Copy a finished export from this app's own folder (which other apps cannot see) into the
+     * shared Movies / Music / Pictures folders through MediaStore, which needs no permission, then
+     * delete the original. Reports back through {@link #nativeExportPublished}. Android 10+.
+     */
+    public void publishToGallery(String path) {
+        Thread worker = new Thread(() -> {
+            File src = new File(path);
+            try {
+                if (Build.VERSION.SDK_INT < 29) {
+                    throw new IOException("Needs Android 10 or later: allow access to all files and export to Movies instead");
+                }
+                String name = src.getName();
+                int dot = name.lastIndexOf('.');
+                String ext = dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
+                String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+                if (mime == null) {
+                    mime = "application/octet-stream";
+                }
+                Uri collection;
+                String folder;
+                if (mime.startsWith("audio/")) {
+                    collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                    folder = "Music/FilmCraft";
+                } else if (mime.startsWith("image/")) {
+                    collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                    folder = "Pictures/FilmCraft";
+                } else {
+                    collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                    folder = "Movies/FilmCraft";
+                }
+                android.content.ContentValues values = new android.content.ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH, folder);
+                values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                Uri uri = getContentResolver().insert(collection, values);
+                if (uri == null) {
+                    throw new IOException("The system would not make a file in " + folder);
+                }
+                boolean complete = false;
+                try (java.io.FileInputStream in = new java.io.FileInputStream(src); OutputStream out = getContentResolver().openOutputStream(uri)) {
+                    if (out == null) {
+                        throw new IOException("Can't write to " + folder);
+                    }
+                    byte[] buf = new byte[1 << 20];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                    }
+                    out.flush();
+                    complete = true;
+                } finally {
+                    if (!complete) {
+                        getContentResolver().delete(uri, null, null);
+                    }
+                }
+                values.clear();
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                getContentResolver().update(uri, values, null, null);
+                //noinspection ResultOfMethodCallIgnored
+                src.delete();
+                nativeExportPublished(folder + "/" + name, null);
+            } catch (IOException | RuntimeException e) {
+                nativeExportPublished(null, e.getMessage() == null ? e.toString() : e.getMessage());
+            }
+        }, "filmcraft-publish");
+        worker.start();
     }
 
     public boolean openUrl(String url) {

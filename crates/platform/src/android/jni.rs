@@ -9,7 +9,7 @@
 
 use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use jni::objects::{JObject, JObjectArray, JString, JValue};
@@ -239,6 +239,68 @@ pub extern "system" fn Java_ai_storyteller_filmcraft_FilmcraftActivity_nativeTex
                 typed.push(s);
             }
         }
+        wake();
+    }));
+}
+
+// ------------------------------------------------------------------------------ keyboard height
+
+static KEYBOARD_PX: AtomicU32 = AtomicU32::new(0);
+
+/// How many pixels of the window's bottom the soft keyboard covers (0: it is hidden).
+pub fn keyboard_height_px() -> u32 {
+    KEYBOARD_PX.load(Ordering::Relaxed)
+}
+
+/// `FilmcraftActivity.nativeKeyboardHeight(int)`: from the activity's UI thread whenever the
+/// keyboard shows, hides or changes size.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_ai_storyteller_filmcraft_FilmcraftActivity_nativeKeyboardHeight<'local>(
+    _env: JNIEnv<'local>,
+    _class: JObject<'local>,
+    pixels: jint,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        KEYBOARD_PX.store(u32::try_from(pixels).unwrap_or(0), Ordering::Relaxed);
+        wake();
+    }));
+}
+
+// ------------------------------------------------------------------------ export to the Gallery
+
+/// How the last [`publish_to_gallery`] ended, until [`take_publish_result`] takes it: where the file
+/// went (`Movies/FilmCraft/<name>`), or what stopped it.
+static PUBLISH_RESULT: Mutex<Option<Result<String, String>>> = Mutex::new(None);
+
+/// Copy the finished export at `path` (in the app's own folder) into the shared Movies, Music or
+/// Pictures folder, which needs no permission, and delete the original. Android 10 and later.
+pub fn publish_to_gallery(path: &str) -> Result<(), String> {
+    with_activity(|env, a| {
+        let s = env.new_string(path)?;
+        env.call_method(a, "publishToGallery", "(Ljava/lang/String;)V", &[JValue::Object(&s)])?.v()
+    })
+}
+
+pub fn take_publish_result() -> Option<Result<String, String>> {
+    PUBLISH_RESULT.lock().unwrap_or_else(PoisonError::into_inner).take()
+}
+
+/// `FilmcraftActivity.nativeExportPublished(String, String)`, from the copy thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_ai_storyteller_filmcraft_FilmcraftActivity_nativeExportPublished<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JObject<'local>,
+    location: JString<'local>,
+    error: JString<'local>,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let text = |env: &mut JNIEnv<'local>, s: &JString<'local>| if s.is_null() { None } else { env.get_string(s).ok().map(String::from) };
+        let result = match (text(&mut env, &location), text(&mut env, &error)) {
+            (Some(l), None) => Ok(l),
+            (_, Some(e)) => Err(e),
+            (None, None) => Err("the export was not copied".to_string()),
+        };
+        *PUBLISH_RESULT.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
         wake();
     }));
 }
