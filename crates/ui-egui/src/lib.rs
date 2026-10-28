@@ -426,6 +426,16 @@ pub struct FilmcraftApp {
     /// The host is a touch screen without mouse or keyboard (Android): hints and empty states say
     /// "tap" and "press and hold", not "click" and "drag".
     pub touch_ui: bool,
+    /// A host that replaces the desktop header and docking area (the Android phone layout):
+    /// called with the whole screen instead of drawing them. It draws panels with
+    /// [`FilmcraftApp::panel_in`] and the Export page with [`FilmcraftApp::export_page`].
+    pub phone_layout: Option<fn(&mut FilmcraftApp, &mut egui::Ui, egui::Rect)>,
+    /// The Program monitor shows the picture only, without its timecode, scrub bar and transport
+    /// (the phone layout has its own).
+    pub phone_monitor: bool,
+    /// A panel a command asked to show ([`FilmcraftApp::show_panel`]) while the phone layout is in
+    /// use; the layout takes it and opens it as a sheet.
+    pub phone_request: Option<PanelKind>,
     pub last_timeline_width: f32,
     /// The sequence whose view `ui.timeline` holds, and that view as it was last exchanged with
     /// `session.state.timeline_views` (see `sync_timeline_view`).
@@ -687,6 +697,9 @@ impl FilmcraftApp {
             fonts_ready: false,
             integrated_titlebar: false,
             touch_ui: false,
+            phone_layout: None,
+            phone_monitor: false,
+            phone_request: None,
             last_timeline_width: 1000.0,
             timeline_view_of: None,
             pending_timeline_drop: None,
@@ -1154,6 +1167,10 @@ impl FilmcraftApp {
     }
 
     pub fn show_panel(&mut self, p: PanelKind) {
+        if self.phone_layout.is_some() {
+            self.phone_request = Some(p);
+            return;
+        }
         // closed while floating: it floats again where it was (#1985); taken before the Timeline's
         // own restore below docks it
         let open = self.ui.dock.contains(p) || self.ui.floating.iter().any(|group| group.panels.contains(&p));
@@ -2123,6 +2140,13 @@ impl FilmcraftApp {
         let t = self.tokens;
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, t.app_bg);
+        if let Some(layout) = self.phone_layout {
+            layout(self, ui, full);
+            // the Timeline has had its chance to place a file drop this frame
+            self.pending_timeline_drop = None;
+            panels::dialogs::show(self, &ctx);
+            return;
+        }
         let header_h = if self.ui.show_header { 38.0 } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
         if self.ui.show_header {

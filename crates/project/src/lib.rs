@@ -631,7 +631,7 @@ impl TrackItem {
     pub fn range(&self) -> TimeRange {
         TimeRange::new(self.start, self.duration)
     }
-    /// Media time displayed at timeline time `t` (ignores time remapping keyframes).
+    /// Media time displayed at timeline time `t`, following the speed ramp (Time Remapping keyframes).
     pub fn source_time_at(&self, t: Tick) -> Tick {
         if let Some(h) = self.frame_hold {
             return h;
@@ -650,16 +650,109 @@ impl TrackItem {
     /// Media time at timeline time `t` ignoring any frame hold.
     pub fn moving_source_time_at(&self, t: Tick) -> Tick {
         let rel = t - self.start;
-        let scaled = Tick((rel.0 as f64 * self.speed.abs()).round() as i64);
-        if self.reverse {
-            self.source_in + Tick((self.duration.0 as f64 * self.speed.abs()).round() as i64) - scaled - Tick(1)
-        } else {
-            self.source_in + scaled
-        }
+        let scaled = self.media_advance(rel);
+        if self.reverse { self.source_in + self.media_advance(self.duration) - scaled - Tick(1) } else { self.source_in + scaled }
     }
     /// Media time consumed by the item (the source out point).
     pub fn source_out(&self) -> Tick {
-        self.source_in + Tick((self.duration.0 as f64 * self.speed.abs()).round() as i64)
+        self.source_in + self.media_advance(self.duration)
+    }
+    /// Timeline time at which media position `m` is shown, the inverse of
+    /// [`Self::moving_source_time_at`] (where a keyframe sits in the sequence).
+    pub fn timeline_time_of_source(&self, m: Tick) -> Tick {
+        let from_in = if self.reverse { self.source_out().0.saturating_sub(1).saturating_sub(m.0) } else { m.0.saturating_sub(self.source_in.0) };
+        let media = from_in as f64;
+        let rel = match self.speed_ramp() {
+            Some(p) => self.ramp_time(p, media),
+            None => media / self.speed.abs().max(1e-6),
+        };
+        self.start + Tick(if rel.is_finite() { rel.round() as i64 } else { 0 })
+    }
+    /// The Speed parameter of Time Remapping when it holds keyframes (a speed ramp). Its keyframes
+    /// are in media time, like those of every effect, so they stay on their frames when the clip
+    /// is trimmed or moved.
+    pub fn speed_ramp(&self) -> Option<&Param> {
+        self.effect("time_remap").filter(|e| e.enabled).and_then(|e| e.param("speed")).filter(|p| p.is_animated())
+    }
+    /// Media ticks played in `rel` timeline ticks from the in point: `rel × speed`, with the speed
+    /// following the ramp when there is one.
+    fn media_advance(&self, rel: Tick) -> Tick {
+        let r = rel.0 as f64;
+        let m = match self.speed_ramp() {
+            Some(p) => self.ramp_advance(p, r),
+            None => r * self.speed.abs(),
+        };
+        Tick(if m.is_finite() { m.round() as i64 } else { 0 })
+    }
+    /// Media ticks per timeline tick at media position `m` (floored so a 0 % or negative key keeps
+    /// the clip moving; direction is the Reverse flag's business).
+    fn ramp_rate(&self, p: &Param, m: f64) -> f64 {
+        (p.scalar_at(Tick(m as i64)).abs() / 100.0).max(RAMP_MIN_RATE) * self.speed.abs().max(1e-6)
+    }
+    /// Timeline ticks to play media `[a, b]`, by Simpson's rule over 1/rate (exact for a constant
+    /// rate, and the rate is smooth between two keyframes).
+    fn ramp_span(&self, p: &Param, a: f64, b: f64) -> f64 {
+        const N: usize = 16;
+        let h = (b - a) / N as f64;
+        let mut sum = 0.0;
+        for i in 0..=N {
+            let w = if i == 0 || i == N {
+                1.0
+            } else if i % 2 == 1 {
+                4.0
+            } else {
+                2.0
+            };
+            sum += w / self.ramp_rate(p, a + h * i as f64);
+        }
+        sum * h / 3.0
+    }
+    /// Media ticks played in `rel` timeline ticks: integrates the rate through the keyframes.
+    fn ramp_advance(&self, p: &Param, rel: f64) -> f64 {
+        let start = self.source_in.0 as f64;
+        if rel <= 0.0 {
+            return rel * self.ramp_rate(p, start);
+        }
+        let mut at = start;
+        let mut left = rel;
+        for key in p.keyframes.iter().map(|k| k.time.0 as f64).filter(|&k| k > start) {
+            let span = self.ramp_span(p, at, key);
+            if span >= left {
+                // inside this segment: bisect for the media position that takes `left`
+                let (mut lo, mut hi) = (at, key);
+                for _ in 0..40 {
+                    let mid = (lo + hi) / 2.0;
+                    if self.ramp_span(p, at, mid) < left {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                return (lo + hi) / 2.0 - start;
+            }
+            left -= span;
+            at = key;
+        }
+        // past the last keyframe the speed stays constant
+        at + left * self.ramp_rate(p, at) - start
+    }
+    /// Timeline ticks to play `media` ticks from the in point, the inverse of [`Self::ramp_advance`].
+    fn ramp_time(&self, p: &Param, media: f64) -> f64 {
+        let start = self.source_in.0 as f64;
+        if media <= 0.0 {
+            return media / self.ramp_rate(p, start);
+        }
+        let end = start + media;
+        let mut at = start;
+        let mut total = 0.0;
+        for key in p.keyframes.iter().map(|k| k.time.0 as f64).filter(|&k| k > start) {
+            if key >= end {
+                break;
+            }
+            total += self.ramp_span(p, at, key);
+            at = key;
+        }
+        total + self.ramp_span(p, at, end)
     }
     pub fn effect(&self, id: &str) -> Option<&EffectInstance> {
         self.effects.iter().find(|e| e.effect == id)
@@ -886,6 +979,10 @@ impl Default for SequenceSettings {
 }
 
 /// Largest frame side, in pixels.
+/// The slowest a speed ramp plays (1 %), so a 0 % key slows the clip to a crawl instead of freezing
+/// the mapping (use a frame hold to freeze).
+const RAMP_MIN_RATE: f64 = 0.01;
+
 pub const MAX_FRAME_SIDE: u32 = 32_768;
 /// Largest frame area, in pixels (16384 x 16384: 16K and 16384 x 8192 panoramas fit).
 pub const MAX_FRAME_PIXELS: u64 = 268_435_456;
@@ -2088,6 +2185,68 @@ mod tests {
         assert_eq!(t.item_at(rate.tick_of(10)).unwrap().id, a.id);
         assert!(t.item_at(rate.tick_of(48)).is_none());
         assert_eq!(a.source_time_at(rate.tick_of(10)), Tick(1000) + rate.tick_of(20));
+    }
+
+    fn ramped(keys: &[(i64, f64)]) -> TrackItem {
+        let (mut p, clip, _) = demo_project();
+        let rate = FrameRate::FPS_24;
+        let mut it = p.make_track_item(clip, TrackKind::Video, Tick(0), TimeRange::new(Tick(0), Tick(10 * TICKS_PER_SECOND)), rate).unwrap();
+        let e = it.effect_mut("time_remap").unwrap();
+        let param = e.params.entry("speed".into()).or_insert_with(|| Param::new(ParamValue::Float(100.0)));
+        for &(t, v) in keys {
+            param.put_keyframe(Tick(t), ParamValue::Float(v));
+        }
+        it
+    }
+
+    #[test]
+    fn speed_ramp_follows_the_keyframes() {
+        let s = TICKS_PER_SECOND;
+        // 100 % at media 0 s rising linearly to 400 % at 4 s: t = ln(4) / 0.75 s to play 4 s
+        let mut it = ramped(&[(0, 100.0), (4 * s, 400.0)]);
+        it.duration = Tick((4.0f64.ln() / 0.75 * s as f64) as i64);
+        let out = it.source_out();
+        assert!((out.0 - 4 * s).abs() < s / 1000, "{out:?}");
+        // monotonic, starts at the in point, and the inverse gets the timeline time back
+        let mut last = Tick(-1);
+        for i in 0..=20 {
+            let t = Tick(it.duration.0 * i / 20);
+            let m = it.moving_source_time_at(t);
+            assert!(m > last);
+            last = m;
+            let back = it.timeline_time_of_source(m);
+            assert!((back.0 - t.0).abs() < s / 1000, "{t:?} {back:?}");
+        }
+        assert_eq!(it.moving_source_time_at(Tick::ZERO), it.source_in);
+        // after the last key the speed stays at 400 %
+        it.duration = Tick(10 * s);
+        let a = it.moving_source_time_at(Tick(6 * s));
+        let b = it.moving_source_time_at(Tick(7 * s));
+        assert!(((b - a).0 - 4 * s).abs() < s / 1000);
+        // reversed, the clip plays the same media backwards
+        it.reverse = true;
+        assert_eq!(it.moving_source_time_at(Tick::ZERO), it.source_out() - Tick(1));
+        assert!(it.moving_source_time_at(it.duration) <= it.source_in + Tick(1));
+    }
+
+    #[test]
+    fn speed_ramp_edge_cases_stay_finite() {
+        let s = TICKS_PER_SECOND;
+        // a constant ramp is the clip speed, as a 0 % or negative key plays at the floor
+        let mut it = ramped(&[(0, 50.0), (2 * s, 50.0)]);
+        it.speed = 2.0;
+        assert_eq!(it.moving_source_time_at(Tick(4 * s)), it.source_in + Tick(4 * s));
+        let it = ramped(&[(0, 0.0), (s, -300.0)]);
+        let m = it.moving_source_time_at(Tick(s));
+        assert!(m > it.source_in && m < it.source_in + Tick(s));
+        // keys before the in point, a disabled effect and hostile times
+        let mut it = ramped(&[(-5 * s, 200.0), (i64::MAX, 100.0)]);
+        assert!(it.source_out() > it.source_in);
+        it.effect_mut("time_remap").unwrap().enabled = false;
+        assert_eq!(it.source_out(), it.source_in + it.duration);
+        it.effect_mut("time_remap").unwrap().enabled = true;
+        it.duration = Tick(i64::MAX / 4);
+        let _ = (it.source_out(), it.moving_source_time_at(Tick(1)), it.timeline_time_of_source(Tick(i64::MIN)));
     }
 
     #[test]

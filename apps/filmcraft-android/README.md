@@ -44,21 +44,31 @@ pictures and music. Without either, FilmCraft works inside its own folder
 
 ## Using it on a touch screen
 
-**Putting clips on the timeline.** Import (see above), tap a clip in the Project panel (tap
-several to choose several), then tap **Add** in the touch bar along the bottom. The clips land back
-to back at the end of the timeline, and a timeline that does not exist yet is made from the first
-clip. The arrow next to Add offers *Insert at the playhead* and *Overwrite at the playhead*.
-Dragging a clip from the Project panel onto the timeline works too.
+**The phone layout** replaces the desktop panels with what an edit needs, in dp-sized controls:
+the **Program** picture and its transport on top (in landscape on the left), the **Timeline**
+under it (on the right), a bar with Undo, Redo and **Export** above, and a **tool strip** along the
+bottom: Import, Media, Add, Split, Delete, Speed, Properties, Audio, Effects, Text and Color. ☰ opens
+the desktop menus as a list. A tool that needs a panel opens it as a *sheet* in place of the
+Timeline (the picture stays in view); tap the tool again or ✕ to go back. Timeline zoom is the pill
+at the Timeline's corner. The result of each tap shows above the strip for a few seconds. While the
+soft keyboard is up, the strip steps aside and the interface keeps above the keyboard.
 
-**The touch bar** has what the desktop does with keyboard shortcuts and small icons, as 48 dp
-buttons: Import, Add, Play, frame back and forward, Split (cut at the playhead), Delete (removes
-the selected clips and closes the gap), Undo, Redo, timeline Zoom −, Zoom + and Fit, and ⋯ for
-Save, Export, Interface larger / smaller and Hide this bar (a small tab brings it back). The result of
-each tap shows above the bar for a few seconds. While the soft keyboard is up, the bar steps aside
-and the interface keeps above the keyboard.
+**Putting clips on the timeline.** Import (see above), open **Media**, tap a clip (tap several to
+choose several), then tap **Add**: the clips land back to back at the end of the timeline, and a
+timeline that does not exist yet is made from the first clip. **Insert** and **Overwrite** put them
+at the playhead. **Split** cuts the chosen clip at the playhead and **Delete** removes the chosen
+clips and closes the gap.
 
-- The interface opens in landscape, full screen. On a phone, Settings ▸ Appearance ▸ UI Scale ▸ Auto
-  zooms it out so the panels fit; ⋯ ▸ Interface larger / smaller (or a fixed UI Scale) changes it.
+**Speed and speed ramps.** Tap a clip on the timeline, then **Speed**: tap 25 % … 400 % or Reverse
+for a constant speed (the clip gets shorter or longer and the clips after it follow), or tap a ramp
+shape (slow to fast, fast to slow, hero time, bullet time…) to speed up and slow down along it while
+the clip keeps its length and picture. The graph shows the speed along the clip (tap it to move the
+playhead); every point of the ramp is listed with ‒ / + (a quarter less or more) and ✕, and **Add
+point at the playhead** adds one. A clip's linked sound ramps with it. The ramp is the Time
+Remapping effect's Speed keyframes (media time, like every effect keyframe), so the desktop
+Effect Controls edit the same points, and `clip.speedRamp` / `clip.speedRampKey` do from the
+control channel.
+
 - A tap clicks and a drag drags. **Press and hold** opens a context menu where the desktop uses a
   right-click. **Two fingers** scroll panels and the timeline; spreading or pinching them zooms the
   timeline.
@@ -103,7 +113,7 @@ FilmcraftActivity.java (NativeActivity)    immersive full screen, soft-keyboard 
 libfilmcraft.so: android_main (src/lib.rs)
   ├─ eframe + winit (android-native-activity) → wgpu (Vulkan | GLES)       src/gfx.rs
   ├─ filmcraft_ui_egui::FilmcraftApp (the shared UI), wrapped by AndroidShell:
-  │     touch bar and phone zoom (src/chrome.rs, touch_bar.rs, edit_actions.rs), touch gestures
+  │     phone layout and speed sheet (src/phone.rs, speed_sheet.rs, chrome.rs, edit_actions.rs), touch gestures
   │     (src/touch.rs), file browser (src/file_browser.rs), Back, soft keyboard, clipboard
   ├─ cpal / AAudio: the desktop app's audio.rs and audio_in.rs (+ src/mic.rs for the permission)
   ├─ logcat + file logger (src/log_sink.rs, the desktop logging.rs underneath)

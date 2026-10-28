@@ -37,8 +37,7 @@ const PROPS_VALUE_R: f32 = PROPS_NAV_X + NAV_STEP + 12.0;
 
 /// Timeline time at which the clip shows media time `m` (where a keyframe sits in the sequence).
 fn timeline_time_of(it: &TrackItem, m: Tick) -> Tick {
-    let offset = if it.reverse { it.source_out() - m - Tick(1) } else { m - it.source_in };
-    it.start + Tick((offset.0 as f64 / it.speed.abs().max(1e-6)).round() as i64)
+    it.timeline_time_of_source(m)
 }
 
 // The press frame can include movement before the button went down. Start from the press
@@ -1163,8 +1162,16 @@ pub(crate) fn graph_rows(
     row_line(ui, velr, lane, &t);
     let speed = it.speed.abs().max(1e-6);
     let dur = it.duration.0.max(1) as f64;
-    let to_media = |f: f64| it.source_in + Tick((f * dur * speed) as i64);
-    let to_f = |m: Tick| ((m - it.source_in).0 as f64 / speed / dur) as f32;
+    let ramped = it.speed_ramp().is_some();
+    let to_media = |f: f64| {
+        if ramped {
+            it.source_in + (it.moving_source_time_at(it.start + Tick((f * dur) as i64)) - it.source_in)
+        } else {
+            it.source_in + Tick((f * dur * speed) as i64)
+        }
+    };
+    let to_f =
+        |m: Tick| if ramped { ((it.timeline_time_of_source(m) - it.start).0 as f64 / dur) as f32 } else { ((m - it.source_in).0 as f64 / speed / dur) as f32 };
     let x_of = |f: f32| lane.min.x + f * lane.width();
     // samples: one row of curve values per sample (a point's NaN "auto" coordinate is skipped)
     let n = (lane.width() / 2.0).max(8.0) as usize;

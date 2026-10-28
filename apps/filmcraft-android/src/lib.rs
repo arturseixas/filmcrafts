@@ -15,7 +15,7 @@
 //! | keyboard | hardware keys through winit; the soft keyboard's text through the activity's input view |
 //! | system clipboard (text) | `ClipboardManager` through JNI |
 //!
-//! Everything but the touch interface ([`touch_bar`], [`edit_actions`], [`chrome`], [`touch`]:
+//! Everything but the touch interface ([`phone`], [`speed_sheet`], [`edit_actions`], [`chrome`], [`touch`]:
 //! plain egui over the session, tested on every target) is Android-only.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
@@ -43,5 +43,6 @@ pub mod exports;
 mod logging;
 #[cfg(target_os = "android")]
 pub mod mic;
+pub mod phone;
+pub mod speed_sheet;
 pub mod touch;
-pub mod touch_bar;

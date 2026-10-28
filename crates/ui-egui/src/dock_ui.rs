@@ -142,6 +142,16 @@ impl FilmcraftApp {
         Ok(())
     }
 
+    /// Draw `panel` in `content` outside the dock (the phone layout places its own panels).
+    pub fn panel_in(&mut self, ui: &mut egui::Ui, panel: PanelKind, content: Rect) {
+        self.panel_body(ui, panel, content);
+    }
+
+    /// The Export page in `body` (Export mode).
+    pub fn export_page(&mut self, ui: &mut egui::Ui, body: Rect) {
+        panels::export_mode::show(self, ui, body);
+    }
+
     fn panel_body(&mut self, ui: &mut egui::Ui, panel: PanelKind, content: Rect) {
         self.auto.add(&format!("panel.{}", panel.id()), content, panel.title());
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content).id_salt(("panel", panel.id())));

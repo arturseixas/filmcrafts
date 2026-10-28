@@ -3641,7 +3641,26 @@
 	already exists. Press Replace to overwrite it.	já existe. Toque em Substituir para sobrescrevê-lo.
 	No matching files in this folder	Nenhum arquivo compatível nesta pasta
 	Tap a clip to select it. Press and hold for more options. Two fingers scroll and zoom.	Toque em um clipe para selecioná-lo. Mantenha pressionado para mais opções. Dois dedos rolam e dão zoom.
-	Import clips, tap one in the Project panel, then tap Add below.	Importe clipes, toque em um no painel Projeto e depois em Adicionar, abaixo.
+	Tap Import, then Media: tap a clip and tap Add.	Toque em Importar, depois em Mídia: toque em um clipe e em Adicionar.
 	Make the timeline from the chosen clips:	Criar a linha do tempo com os clipes escolhidos:
 	Make timeline	Criar linha do tempo
 	FilmCraft needs microphone access to record: allow it, then record again	O FilmCraft precisa de acesso ao microfone para gravar: permita e grave de novo
+	Menu	Menu
+	Play	Reproduzir
+	Pause	Pausar
+	‹ Edit	‹ Editar
+	Back one frame	Voltar um quadro
+	Forward one frame	Avançar um quadro
+	Tap a clip on the timeline to change its speed.	Toque em um clipe na linha do tempo para mudar a velocidade dele.
+	Speed ramp	Rampa de velocidade
+	Remove ramp	Remover rampa
+	Add point at the playhead	Adicionar ponto no cursor
+	Choose a shape above, or add a point at the playhead, to ramp the speed.	Escolha um formato acima, ou adicione um ponto no cursor, para criar a rampa de velocidade.
+	Ramp, average	Rampa, média
+	Slow to fast	Lento para rápido
+	Fast to slow	Rápido para lento
+	Slow, fast, slow	Lento, rápido, lento
+	Fast, slow, fast	Rápido, lento, rápido
+	Hero time	Hero time
+	Bullet time	Bullet time
+	Pulse	Pulso

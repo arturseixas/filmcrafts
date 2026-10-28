@@ -823,11 +823,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 fn empty_state_touch(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let chosen: Vec<u64> = app.session.state.project_selection.iter().filter(|i| app.session.project.item(**i).is_some()).map(|i| i.0).collect();
-    let text = if chosen.is_empty() {
-        tl!("Import clips, tap one in the Project panel, then tap Add below.")
-    } else {
-        tl!("Make the timeline from the chosen clips:")
-    };
+    let text = if chosen.is_empty() { tl!("Tap Import, then Media: tap a clip and tap Add.") } else { tl!("Make the timeline from the chosen clips:") };
     ui.painter().text(rect.center() - vec2(0.0, 16.0), Align2::CENTER_CENTER, text, Tokens::ui(13.0), t.text_dim);
     let b = Rect::from_center_size(rect.center() + vec2(0.0, 22.0), vec2(220.0, 30.0));
     let resp = ui.interact(b, egui::Id::unique("tl-touch-start"), Sense::click());

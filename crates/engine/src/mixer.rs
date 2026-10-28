@@ -1060,7 +1060,7 @@ pub(crate) fn clip_peaks(s: &Session, clips: &[filmcraft_project::ClipId]) -> Ve
                 continue;
             }
             let s0 = it.source_in.to_units_floor(sr as i64);
-            let len = ((it.duration.to_units_floor(sr as i64) as f64) * it.speed.abs().max(1e-6)).ceil() as i64;
+            let len = (it.source_out() - it.source_in).to_units_floor(sr as i64).saturating_add(1).max(0);
             let mut peak = 0f32;
             let mut pos = s0;
             while pos < s0 + len {

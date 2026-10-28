@@ -135,16 +135,16 @@ impl AndroidShell {
             let p = Path::new(&path);
             if crate::exports::is_private(p, &private) && crate::exports::publishable(p) {
                 match jni::publish_to_gallery(&path) {
-                    Ok(()) => self.chrome.bar.notify(ctx, filmcraft_ui_egui::i18n::t("Export finished: saving it to your Gallery…"), false),
-                    Err(e) => self.chrome.bar.notify(ctx, e, true),
+                    Ok(()) => crate::phone::notify(ctx, filmcraft_ui_egui::i18n::t("Export finished: saving it to your Gallery…"), false),
+                    Err(e) => crate::phone::notify(ctx, e, true),
                 }
             } else {
-                self.chrome.bar.notify(ctx, format!("{} {path}", filmcraft_ui_egui::i18n::t("Export finished:")), false);
+                crate::phone::notify(ctx, format!("{} {path}", filmcraft_ui_egui::i18n::t("Export finished:")), false);
             }
         }
         match jni::take_publish_result() {
-            Some(Ok(at)) => self.chrome.bar.notify(ctx, format!("{} {at}", filmcraft_ui_egui::i18n::t("Saved to")), false),
-            Some(Err(e)) => self.chrome.bar.notify(ctx, e, true),
+            Some(Ok(at)) => crate::phone::notify(ctx, format!("{} {at}", filmcraft_ui_egui::i18n::t("Saved to")), false),
+            Some(Err(e)) => crate::phone::notify(ctx, e, true),
             None => {}
         }
     }

@@ -1932,6 +1932,76 @@ fn build() -> Vec<CommandSpec> {
                 Ok(Value::Null)
             }
         ),
+        cmd!(
+            "clip.speedRamp",
+            "Speed Ramp",
+            ["Clip"],
+            None,
+            r#"{"clips":[id]?,"preset":"slowToFast|fastToSlow|easeInOut|montage|hero|bullet|pulse|none"?,"keys":[[position 0..1 along the clip's media, speed %]]? (instead of a preset),"keepLength":bool=true (scale the speeds so the clip plays the same media in the same time)}"#,
+            has_selection,
+            |s, p| {
+                let keep = bool_p(p, "keepLength").unwrap_or(true);
+                let shape: Vec<(f64, f64)> = match (str_p(p, "preset"), p.get("keys").and_then(Value::as_array)) {
+                    (Some("none"), _) => Vec::new(),
+                    (Some(name), _) => crate::speed_ramp::preset(name).ok_or_else(|| bad("clip.speedRamp", format!("unknown preset `{name}`")))?.to_vec(),
+                    (None, Some(keys)) => keys
+                        .iter()
+                        .map(|k| {
+                            let pair = k.as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
+                            pair.ok_or_else(|| bad("clip.speedRamp", "each key is [position, speed %]"))
+                        })
+                        .collect::<std::result::Result<_, _>>()?,
+                    (None, None) => return Err(bad("clip.speedRamp", "need `preset` or `keys`")),
+                };
+                // a clip and its linked partners ramp as one, so picture and sound stay in sync
+                let sel = with_links(s, &clips_p(s, p));
+                let changed = s.edit_sequence("Speed Ramp", |q, _, _| {
+                    for c in &sel {
+                        if q.find_item(*c).and_then(|(t, _)| q.track(t)).is_some_and(|t| t.locked) {
+                            return Err(edit::EditError::Locked.into());
+                        }
+                    }
+                    Ok(crate::speed_ramp::apply(q, &sel, &shape, keep)?)
+                })?;
+                Ok(json!({"clips": changed, "keys": shape.len()}))
+            }
+        ),
+        cmd!(
+            "clip.speedRampKey",
+            "Speed Ramp Point",
+            ["Clip"],
+            None,
+            r#"{"clips":[id]?,"time":ticks? (timeline time of the point; default: the playhead, pinned to the clip),"mediaTime":ticks? (instead of `time`),"value":percent? (default: the ramp's speed there),"delete":bool?}"#,
+            has_selection,
+            |s, p| {
+                let sel = with_links(s, &clips_p(s, p));
+                let at = time_p(s, p, "");
+                let ph = s.playhead();
+                let delete = bool_p(p, "delete").unwrap_or(false);
+                let value = f64_p(p, "value");
+                let explicit = p.get("mediaTime").and_then(Value::as_i64).map(Tick);
+                let primary = *sel.first().ok_or_else(|| bad("clip.speedRampKey", "select a clip first"))?;
+                let media = {
+                    let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+                    let (_, it) = q.find_item(primary).ok_or(filmcraft_edit::EditError::NoItem(primary))?;
+                    explicit.unwrap_or_else(|| it.source_time_at(at.unwrap_or_else(|| ph.clamp(it.start, (it.end() - Tick(1)).max(it.start)))))
+                };
+                // a new point holds the speed the ramp has there
+                let now = {
+                    let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+                    q.find_item(primary).and_then(|(_, it)| it.speed_ramp().map(|p| p.f64_at(media))).unwrap_or(100.0)
+                };
+                s.edit_sequence("Speed Ramp Point", |q, _, _| {
+                    for c in &sel {
+                        if q.find_item(*c).and_then(|(t, _)| q.track(t)).is_some_and(|t| t.locked) {
+                            return Err(edit::EditError::Locked.into());
+                        }
+                    }
+                    Ok(crate::speed_ramp::edit_key(q, &sel, media, if delete { None } else { Some(value.unwrap_or(now)) })?)
+                })?;
+                Ok(json!({"mediaTime": media.0}))
+            }
+        ),
         // Each clip flips on its own, as in Premiere (#484): with one enabled and one disabled clip
         // selected, Enable swaps them rather than first making both the same.
         cmd!("clip.enable", "Enable", ["Clip"], Some("Shift+E"), r#"{"clips":[id]?}"#, has_selection, |s, p| {
